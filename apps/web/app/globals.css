@@ -656,3 +656,54 @@ html.theme-anim body * {
 .page-enter {
   animation: page-enter 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* Scroll story (home page 3D experience) ---------------------------------- */
+
+/*
+ * Chapter slides stack over the canvas. Opacity/translate transition between
+ * chapters; visibility also switches (delayed) so a hidden slide is skipped
+ * by screen readers even where `inert` is unsupported.
+ */
+.story-slide {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(1.75rem);
+  transition:
+    opacity 480ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 480ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 480ms;
+}
+
+.story-slide[data-active='true'] {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: 0s, 0s, 0s;
+}
+
+/* Readability veils behind story copy over the 3D scene. Brand navy, soft
+   radial falloff; `story-veil-flip` mirrors it for right-hand copy. */
+.story-veil {
+  background: radial-gradient(
+    120% 100% at 18% 50%,
+    rgb(1 15 29 / 0.85) 0%,
+    rgb(1 15 29 / 0.45) 52%,
+    transparent 78%
+  );
+}
+
+.story-veil-flip {
+  background: radial-gradient(
+    120% 100% at 82% 50%,
+    rgb(1 15 29 / 0.85) 0%,
+    rgb(1 15 29 / 0.45) 52%,
+    transparent 78%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .story-slide {
+    transition: none;
+    transform: none;
+  }
+}
