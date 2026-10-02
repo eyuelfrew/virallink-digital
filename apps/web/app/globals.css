@@ -1,0 +1,658 @@
+@import "tailwindcss";
+
+/* The `dark:` variant keys off the `.dark` class the theme bootstrap puts on
+   <html>, matching how the tokens above are swapped. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   Virallink design tokens
+
+   Colours are sampled directly from the logo: the blue of the monogram is the
+   brand colour, the gold of the dove is the single accent. Nothing here is
+   invented — if a shade is not needed for contrast or depth it is not defined.
+
+   Rules the rest of the codebase follows:
+   - `brand` is the identity colour. Gradients are never built from it.
+   - `accent` (gold) is used for exactly one accent per viewport and never for
+     body text, form labels or anything sitting on white below 4.5:1 contrast.
+   - Radii are restrained. There is no `rounded-full` on containers.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Brand blue, extended into a usable ramp. The 500 step is the exact logo
+     colour #025298. */
+  --brand-50: #eef4fb;
+  --brand-100: #d6e5f6;
+  --brand-200: #aecbec;
+  --brand-300: #7fabe0;
+  --brand-400: #4a86d1;
+  --brand-500: #025298;
+  --brand-600: #024a88;
+  --brand-700: #023b6d;
+  --brand-800: #022e54;
+  --brand-900: #01213c;
+  --brand-950: #010f1d;
+
+  /* Accent gold, from the dove. Kept to two steps so it cannot become a
+     decorative colour in its own right. */
+  --accent-400: #f9a71b;
+  --accent-500: #e8940c;
+  --accent-600: #b87309;
+
+  /* Ink and surface neutrals. Cool-tinted so they sit with the blue. */
+  --ink: #0b0f14;
+  --ink-soft: #1c242e;
+  --ink-muted: #55616f;
+  --ink-subtle: #7b8794;
+  --surface: #ffffff;
+  --surface-muted: #f7f8fa;
+  --surface-sunken: #eef1f5;
+  --border: #dde2e8;
+  --border-strong: #c4ccd6;
+
+  /* Feedback colours, distinguishable without relying on hue alone. */
+  --success: #0f7a4d;
+  --success-bg: #e6f4ee;
+  --warning: #a16207;
+  --warning-bg: #fdf3e0;
+  --danger: #b42318;
+  --danger-bg: #fdeceb;
+  --info: #0b6b8f;
+  --info-bg: #e5f3f8;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+}
+
+/* ==========================================================================
+   Dark theme
+
+   Same structure, inverted values. Everything below redefines only the
+   semantic tokens; the component layer reads the variables, so components need
+   no dark variants of their own.
+
+  The dark surfaces are cool-tinted (navy, not grey) so they sit with the brand
+  blue. The brand ramp's light steps are re-pointed at dark tints, because   `hover:bg-brand-50` must remain a subtle hover in dark mode, not a flash of
+   near-white. In light theme `brand-500` is the exact logo colour.
+   ========================================================================== */
+
+.dark {
+  color-scheme: dark;
+
+  --brand-50: #0f2036;
+  --brand-100: #16304d;
+  --brand-200: #1e4166;
+
+  /* The mid steps are re-pointed lighter, mirroring the light steps above. On
+     a dark surface the logo blue (#025298) gives brand text only ~2.4:1
+     contrast, so links, eyebrows and figures disappear. The lighter steps keep
+     `text-brand-500/600` legible; filled buttons get a shade lighter with them,
+     which is the standard trade on dark themes. */
+  --brand-300: #4a86d1;
+  --brand-400: #7fabe0;
+  --brand-500: #4a86d1;
+  --brand-600: #7fabe0;
+  --brand-700: #a9c6ec;
+
+  --ink: #e9eef5;
+  --ink-soft: #c6d0dd;
+  --ink-muted: #97a4b6;
+  --ink-subtle: #6e7d90;
+  --surface: #0d1219;
+  --surface-muted: #111823;
+  --surface-sunken: #182130;
+  --border: #232f3e;
+  --border-strong: #324256;
+
+  --success: #34c48c;
+  --success-bg: #0c2419;
+  --warning: #e5a83b;
+  --warning-bg: #2a1f0a;
+  --danger: #f2746a;
+  --danger-bg: #2c1210;
+  --info: #4db6d8;
+  --info-bg: #0a222c;
+}
+
+/* The one-shot theme transition. ThemeToggle adds this class before flipping
+   the theme and removes it once the colours have settled, so switching is a
+   smooth crossfade without a permanent transition cost on every element. */
+html.theme-anim body,
+html.theme-anim body * {
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    fill 260ms ease,
+    stroke 260ms ease !important;
+}
+
+/* Dark scrollbars: the browser's default white track would glare on a dark
+   page. `color-scheme` above handles form controls; this handles the scrollbar
+   in Firefox and Chromium alike. */
+.dark {
+  scrollbar-color: var(--border-strong) var(--surface);
+}
+
+@theme inline {
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-brand-950: var(--brand-950);
+
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+
+  --radius-sm: var(--radius-sm);
+  --radius: var(--radius);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  --font-sans: var(--font-sora), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-jb), ui-monospace, "SFMono-Regular", monospace;
+
+  /* A fluid type scale. Headings grow with the viewport rather than jumping at
+     breakpoints, which is what stops the layout reflowing on mid-size screens. */
+  --text-display: clamp(2.5rem, 1.5rem + 4.5vw, 4.75rem);
+  --text-h1: clamp(2rem, 1.4rem + 2.8vw, 3.25rem);
+  --text-h2: clamp(1.5rem, 1.2rem + 1.6vw, 2.25rem);
+  --text-h3: clamp(1.25rem, 1.1rem + 0.8vw, 1.625rem);
+  --text-h4: clamp(1.0625rem, 1rem + 0.4vw, 1.3125rem);
+  --text-lead: clamp(1.0625rem, 1rem + 0.4vw, 1.25rem);
+}
+
+/* ==========================================================================
+   Base
+
+   These sit in Tailwind's `base` cascade layer. That matters: rules left
+   unlayered beat every Tailwind utility regardless of specificity, which made
+   `text-white` headings on dark bands render as ink (near-invisible in the
+   light theme) and stopped border/focus utilities from applying. Inside the
+   layer they still override the preflight, while utilities win as intended.
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* Anchored headings must clear the sticky header. */
+    scroll-padding-top: 5rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Visible focus for keyboard users only — a focus ring that appears on mouse
+     click looks like a bug. */
+  :focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--brand-100);
+    color: var(--brand-900);
+  }
+
+  .dark ::selection {
+    background: var(--brand-200);
+    color: #f2f7fc;
+  }
+}
+
+/* Respect a reduced-motion preference. Motion is decorative throughout, so it
+   can be removed without affecting anything usable. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   Component primitives
+   ========================================================================== */
+
+@layer components {
+  /* The page gutter, used by every section so vertical rhythm stays consistent. */
+  .container-page {
+    width: 100%;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+    max-width: 80rem;
+  }
+
+  @media (min-width: 768px) {
+    .container-page {
+      padding-inline: 2rem;
+    }
+  }
+
+  /* Vertical rhythm between page sections. */
+  .section {
+    padding-block: clamp(3.5rem, 2rem + 6vw, 7rem);
+  }
+
+  .section-tight {
+    padding-block: clamp(2.5rem, 1.5rem + 4vw, 4.5rem);
+  }
+
+  /* A dark band. Used to break up a long page without introducing a gradient. */
+  .band-dark {
+    background: var(--brand-950);
+    color: rgb(255 255 255 / 0.82);
+  }
+
+  .band-dark h1,
+  .band-dark h2,
+  .band-dark h3 {
+    color: #fff;
+  }
+
+  .band-muted {
+    background: var(--surface-muted);
+  }
+
+  /* Hairline rule used instead of shadows to separate areas. */
+  .rule {
+    border-top: 1px solid var(--border);
+  }
+
+  .band-dark .rule {
+    border-color: rgb(255 255 255 / 0.12);
+  }
+
+  /* Skip link: visible only once focused. */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    z-index: 100;
+    padding: 0.75rem 1.25rem;
+    background: var(--brand-500);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .skip-link:focus {
+    left: 1rem;
+    top: 1rem;
+  }
+
+  /* Prose for admin-authored blog content. Deliberately narrow measure. */
+  .prose-content {
+    max-width: 68ch;
+    line-height: 1.75;
+    color: var(--ink-soft);
+  }
+
+  .prose-content h2 {
+    margin-top: 2.5em;
+    margin-bottom: 0.75em;
+    font-size: var(--text-h3);
+  }
+
+  .prose-content h3 {
+    margin-top: 2em;
+    margin-bottom: 0.5em;
+    font-size: var(--text-h4);
+  }
+
+  .prose-content p {
+    margin-block: 1.25em;
+  }
+
+  .prose-content ul,
+  .prose-content ol {
+    margin-block: 1.25em;
+    padding-inline-start: 1.5rem;
+  }
+
+  .prose-content ul {
+    list-style: disc;
+  }
+
+  .prose-content ol {
+    list-style: decimal;
+  }
+
+  .prose-content li {
+    margin-block: 0.375em;
+  }
+
+  .prose-content a {
+    color: var(--brand-500);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .prose-content blockquote {
+    margin-block: 1.5em;
+    padding-inline-start: 1.25rem;
+    border-inline-start: 3px solid var(--brand-500);
+    color: var(--ink-muted);
+    font-style: italic;
+  }
+
+  .prose-content code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--surface-sunken);
+    padding: 0.125em 0.375em;
+    border-radius: var(--radius-sm);
+  }
+
+  .prose-content img {
+    border-radius: var(--radius);
+    height: auto;
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+/* A single gold rule, used to mark a section eyebrow. Gold fails contrast on
+   white as text, so it is only ever a graphic element. */
+.accent-rule {
+  display: block;
+  width: 2.5rem;
+  height: 3px;
+  background: var(--accent-400);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Screen-reader-only text, used for labels that would be visually redundant. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Placeholder shown while server components are loading. */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-sunken) 25%, var(--surface-muted) 50%, var(--surface-sunken) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ==========================================================================
+   Motion
+
+   Reveals are driven by IntersectionObserver in components/motion/Reveal.js;
+   these classes are the states it toggles. Elements start shifted and faded,
+   then ease to rest. With `prefers-reduced-motion` the global override above
+   collapses the durations, so content simply appears.
+   ========================================================================== */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 600ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+
+.reveal-left {
+  transform: translateX(-24px);
+}
+
+.reveal-right {
+  transform: translateX(24px);
+}
+
+.reveal-zoom {
+  transform: scale(0.96);
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* A slow drift for the hero orbs. Subtle by design — the background should
+   feel alive without pulling the eye from the headline. */
+@keyframes orb-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(4%, -6%, 0) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-5%, 4%, 0) scale(0.96);
+  }
+}
+
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  pointer-events: none;
+  animation: orb-drift 18s ease-in-out infinite;
+  will-change: transform;
+}
+
+.orb-slow {
+  animation-duration: 26s;
+  animation-direction: reverse;
+}
+
+/* Hero grid: a faint blueprint grid that fades out towards the bottom, giving
+   the band the engineered feel of the logo. The line colour is token-driven so
+   the same overlay works on light and dark bands. */
+.hero-grid {
+  --grid-line: rgb(2 82 152 / 0.055);
+
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 35%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 35%, transparent 78%);
+}
+
+.dark .hero-grid {
+  --grid-line: rgb(255 255 255 / 0.045);
+}
+
+/* Client marquee. The list is rendered twice; translating the wrapper by its
+   own width loops seamlessly. */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 36s linear infinite;
+}
+
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+.marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+/* Shine sweep for the primary call to action. Triggered on hover only; the
+   pseudo-element is a skewed highlight travelling across the button. */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%) skewX(-18deg);
+  background: linear-gradient(105deg, transparent 32%, rgb(255 255 255 / 0.45) 50%, transparent 68%);
+  transition: transform 700ms ease;
+  pointer-events: none;
+}
+
+.btn-shine:hover::after {
+  transform: translateX(110%) skewX(-18deg);
+}
+
+/* Card lift for content cards on hover. Applied where a border colour change
+   alone would be too quiet: portfolio covers, service cards. */
+.card-lift {
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 200ms ease,
+    box-shadow 260ms ease;
+}
+
+.card-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px -18px rgb(1 15 29 / 0.35);
+}
+
+.dark .card-lift:hover {
+  box-shadow: 0 12px 32px -14px rgb(0 0 0 / 0.6);
+}
+
+/* Blinking status dot for the 'available for projects' badge. */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2.2s ease-in-out infinite;
+}
+
+/* Theme toggle: the sun and moon swap through a rotate-and-scale crossfade. */
+.theme-icon {
+  transition:
+    transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 250ms ease;
+}
+
+/* Camera shutter flash when a photo is taken. */
+@keyframes shutter-flash {
+  0% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.shutter-flash {
+  animation: shutter-flash 420ms ease-out forwards;
+}
+
+/* Route transition, played by (public)/template.js on every navigation. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter {
+  animation: page-enter 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}

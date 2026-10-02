@@ -1,0 +1,19 @@
+{
+  "name": "@virallink/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared enums, permissions, validation schemas and SEO helpers. Plain JavaScript, no TypeScript.",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./enums": "./src/enums.js",
+    "./permissions": "./src/permissions.js",
+    "./schemas": "./src/schemas.js",
+    "./seo": "./src/seo.js",
+    "./format": "./src/format.js"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
+}

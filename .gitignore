@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Environment — never commit real secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Storage — uploaded media and database backups
+storage/media/
+storage/backups/
+storage/*.log
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Test output
+coverage/
+*.lcov
+
+# Build artefacts
+dist/
+*.tsbuildinfo

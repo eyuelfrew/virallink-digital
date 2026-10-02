@@ -1,0 +1,54 @@
+{
+  "name": "@virallink/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Virallink REST API — Express 5 + Sequelize 6 + MySQL 8",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "build": "echo \"No build step — plain JavaScript, run directly by Node\"",
+    "migrate": "sequelize-cli db:migrate --config config/sequelize.config.js --migrations-path src/migrations",
+    "migrate:status": "sequelize-cli db:migrate:status --config config/sequelize.config.js --migrations-path src/migrations",
+    "migrate:undo": "sequelize-cli db:migrate:undo --config config/sequelize.config.js --migrations-path src/migrations",
+    "seed": "sequelize-cli db:seed:all --config config/sequelize.config.js --seeders-path src/seeders",
+    "seed:roles": "sequelize-cli db:seed:all --config config/sequelize.config.js --seeders-path src/seeders",
+    "seed:demo": "node src/scripts/seedDemo.js",
+    "backup": "node src/scripts/backup.js",
+    "create:admin": "node src/scripts/createAdmin.js",
+    "prune:activity": "node src/scripts/pruneActivity.js",
+    "lint": "node --check src/server.js",
+    "test": "node --test test/money.test.js test/isolation.test.js",
+    "test:integration": "node scripts/run-suites.mjs",
+    "test:all": "npm run test && npm run test:integration"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1144.0",
+    "@aws-sdk/s3-request-presigner": "3.1144.0",
+    "@virallink/shared": "*",
+    "bcrypt": "6.0.0",
+    "compression": "1.8.1",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.5",
+    "dotenv": "17.2.4",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
+    "helmet": "8.3.0",
+    "jose": "6.2.12",
+    "multer": "2.0.2",
+    "mysql2": "3.24.5",
+    "nanoid": "5.1.6",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
+    "sharp": "0.35.5",
+    "sequelize": "6.37.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "sequelize-cli": "6.6.5"
+  }
+}
