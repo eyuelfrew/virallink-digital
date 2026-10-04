@@ -56,16 +56,27 @@ CREATE DATABASE virallink CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ### Build the schema and seed the roles
 
-```bash
-npm run migrate     # creates 36 tables
-npm run seed         # 38 permissions, 4 roles, financial categories
-```
+Nothing to do. The API applies pending migrations and seeds the RBAC baseline
+(38 permissions, 4 roles, 12 financial categories, the company profile) on every
+start, so the first `npm run dev:api` builds the schema from empty.
 
-`npm run seed` is the only seeder that runs in production. It contains **no fake
-company data** — no clients, employees, testimonials or statistics. Everything
-public is entered by an administrator and stays hidden until published.
+Both steps are idempotent and tracked:
+
+- a migration runs once, then its filename is recorded in the `SequelizeMeta`
+  table, so it never runs twice;
+- the seeder upserts, so it never duplicates a row.
+
+That makes `npm run migrate` and `npm run seed` optional rather than required.
+They reach the same end state and still exist for production, where you apply
+schema changes deliberately — see "Before deploying".
+
+The seed contains **no fake company data** — no clients, employees,
+testimonials or statistics. Everything public is entered by an administrator and
+stays hidden until published.
 
 ### Create your first administrator
+
+There is no default account. Create one:
 
 ```bash
 npm run create:admin --workspace @virallink/api
@@ -115,27 +126,49 @@ isolation.
 
 ## Schema changes during development
 
-`.env` has `DB_SYNC_ALLOWED=true`, so the API runs `sequelize.sync({ alter: true })`
-on every start. Edit a model, restart the API, and the table follows. You never
-write a migration for a local field tweak.
+Write a migration, in `apps/api/src/migrations/`, named
+`YYYYMMDDHHMMSS-description.cjs` and exporting `up(queryInterface, Sequelize)`.
+Restart the API. The boot sequence applies it and records it in `SequelizeMeta`,
+so there is no separate command to remember and the change is reproducible on
+the server for free. Use `createTable`, `columns` and friends from
+`apps/api/src/migrations/migration-helpers/` rather than hand-writing column
+types — see that file for why migrations describe the schema as it was when they
+were written instead of deriving it from the live models.
 
-**This is development only.** `config/env.js` terminates the process if
-`DB_SYNC_ALLOWED` is true when `NODE_ENV=production`, because `alter: true` can
-drop a column and destroy shareholder or financial data. Production applies
-schema changes with `npm run migrate`.
+Check what has run:
 
-When you finish a feature, write a real migration so the change is reproducible
-on the server — see `apps/api/src/migrations/`.
+```bash
+npm run migrate:status
+```
+
+To reverse one step, `npm run migrate:undo`. Every migration has a `down()`, but
+they drop whole tables, so a rollback after real data exists means restoring a
+backup — see `docs/DEPLOYMENT.md`.
+
+### DB_SYNC_ALLOWED
+
+`.env` ships `DB_SYNC_ALLOWED=false`, and that is the default: the API does not
+call `sequelize.sync()` at all, so models can never quietly alter a table.
+
+Setting it to `true` makes the API run `sequelize.sync({ alter: true })` on every
+start, which is convenient while iterating on models but can drop a column and
+destroy shareholder or financial data. It is a deliberate opt-in, and
+`config/env.js` terminates the process if it is true when `NODE_ENV=production`.
 
 ---
 
 ## Verifying a change
 
 ```bash
-npm test           # money arithmetic + public data isolation
-node apps/api/test/smoke.js    # every public endpoint, auth guards
-node apps/api/test/auth.js     # login, RBAC, data isolation, audit trail
+npm test                # 35 unit tests: money arithmetic + data isolation
+npm run test:integration # 62 checks: public endpoints, login, RBAC, audit trail
+npm run test:all        # both of the above
 ```
+
+`npm run test:all` is the one that matters before a deploy. The integration
+suites apply pending migrations and seed the RBAC baseline themselves, and they
+create their own `*.test` accounts, so they run against an empty database and are
+safe to re-run.
 
 The `auth.js` suite is the important one. It asserts the negative claims: that a
 public response cannot contain employee emails, client contact details,
@@ -158,6 +191,14 @@ find and stop the other process.
 **Pages load but show empty states** — expected on a fresh install. Nothing
 appears publicly until an administrator publishes it. Add content in the admin
 dashboard and publish it.
+
+**A migration fails at boot** — the API stops rather than starting with a broken
+schema, and the log names the migration and the underlying MySQL error. Fix the
+migration, or undo the last one with `npm run migrate:undo`, then restart.
+
+**`Unsafe production configuration`** — `config/env.js` refuses to boot in
+production and lists every problem at once. Locally, `NODE_ENV=production` will
+also flag `COOKIE_SECURE` and `SITE_URL`; those are expected on a local `.env`.
 
 **`Error: Model is not paranoid`** — a model was given `deletedAt` without
 `paranoid: true`. Check the definition in `apps/api/src/models/definitions.js`.
@@ -201,6 +242,10 @@ virallink/
 - [ ] Review `/privacy` and `/terms` against Ethiopian data protection and
       consumer law
 - [ ] Set `NODE_ENV=production`, `DB_SYNC_ALLOWED=false`, `COOKIE_SECURE=true`
+- [ ] Set `AUTO_MIGRATE=false` and run `npm run migrate` once from cPanel's "Run
+      NPM script". `config/env.js` refuses to boot in production otherwise,
+      because Passenger can start several processes at once and concurrent
+      migrations on a live database are not safe
 - [ ] Generate fresh, distinct `JWT_SECRET` and `JWT_REFRESH_SECRET` on the server
 - [ ] Confirm `CORS_ORIGINS` lists only your real site origin
 - [ ] Submit `https://yourdomain.com/sitemap.xml` in Google Search Console

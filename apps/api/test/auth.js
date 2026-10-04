@@ -14,6 +14,7 @@ process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'silent';
 import { createApp } from '../src/app.js';
 import sequelize from '../src/config/database.js';
 import env from '../src/config/env.js';
+import { bootstrapDatabase } from '../src/config/bootstrap.js';
 import bcrypt from 'bcrypt';
 import models from '../src/models/index.js';
 
@@ -24,6 +25,11 @@ const results = [];
 function record(name, ok, detail = '') {
   results.push({ name, ok, detail });
 }
+
+// Apply pending migrations and seed the RBAC baseline, exactly as server.js does
+// on boot. Without this the suite cannot run against an empty database, which is
+// what a fresh clone or a CI job has. Both steps are idempotent.
+await bootstrapDatabase();
 
 const app = createApp();
 const server = app.listen(0);
@@ -204,6 +210,12 @@ for (const path of ['/api/v1/shareholders', '/api/v1/finance/transactions', '/ap
 /* -------------------------------------------------------------------------- */
 /* Super admin session                                                         */
 /* -------------------------------------------------------------------------- */
+
+// Provision the super admin the same way as the other role testers below.
+// Previously this account had to exist already, which meant the suite could not
+// run on a fresh clone or in CI — every assertion after the login silently
+// degraded to testing 401s.
+await createRoleUser('admin@virallink.test', 'SUPER_ADMIN', 'TestAdmin123');
 
 const admin = createClient();
 

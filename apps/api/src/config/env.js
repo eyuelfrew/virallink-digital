@@ -77,6 +77,8 @@ const schema = z.object({
   DB_POOL_IDLE_MS: numericString(10000),
   DB_SYNC_ALLOWED: booleanish.default('false'),
   DB_LOG_QUERIES: booleanish.default('false'),
+  AUTO_MIGRATE: booleanish.default('true'),
+  AUTO_SEED: booleanish.default('true'),
 
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters. Generate one with: openssl rand -base64 48'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
@@ -162,6 +164,13 @@ if (env.isProduction) {
   }
   if (env.DB_SYNC_ALLOWED) {
     problems.push('DB_SYNC_ALLOWED must be false in production');
+  }
+  if (env.AUTO_MIGRATE) {
+    problems.push(
+      'AUTO_MIGRATE must be false in production. Passenger can start several ' +
+        'processes at once and concurrent migrations on a live database are not ' +
+        "safe. Apply schema changes from cPanel with 'Run NPM script' -> npm run migrate.",
+    );
   }
   if (env.BCRYPT_ROUNDS < 12) {
     problems.push('BCRYPT_ROUNDS must be at least 12 in production');

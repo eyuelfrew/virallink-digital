@@ -1,6 +1,7 @@
 import env from './config/env.js';
 import logger from './config/logger.js';
 import sequelize, { assertDatabaseConnection, syncSchema } from './config/database.js';
+import { bootstrapDatabase } from './config/bootstrap.js';
 import { createApp } from './app.js';
 import { pruneExpiredTokens } from './services/auth.service.js';
 import { pruneRevokedTokens } from './utils/cache.js';
@@ -11,8 +12,9 @@ import './models/index.js';
  *
  * Boot order matters: configuration is validated (and the process exits with a
  * named error if it is wrong), then the database connection is verified, then
- * the schema is reconciled in development, and only then does the HTTP server
- * start listening.
+ * pending migrations are applied and reference data is seeded, then the schema
+ * is reconciled in development, and only then does the HTTP server start
+ * listening.
  *
  * On cPanel, Passenger owns this process. `port` must match the port assigned to
  * the app in the Setup Node.js App panel; Passenger reads the listening port from
@@ -27,6 +29,13 @@ async function start() {
   // Development convenience: keep tables in step with the models. No-op unless
   // DB_SYNC_ALLOWED is true, and impossible in production.
   await syncSchema();
+
+  // Apply pending migrations and seed reference data so a fresh clone serves
+  // requests without a manual migrate/seed step first. Both are idempotent and
+  // gated by AUTO_MIGRATE / AUTO_SEED. Runs after syncSchema because
+  // sequelize.sync() is the faster path when it is enabled and creates the
+  // tables these migrations would otherwise apply.
+  await bootstrapDatabase();
 
   const app = createApp();
 

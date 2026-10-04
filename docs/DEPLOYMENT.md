@@ -10,14 +10,55 @@ Node.js cannot run on the account and this deployment path does not apply.
 
 ---
 
+## Before you deploy: three open bugs
+
+The deployment itself works — the app builds, the API boots, and the steps below
+are accurate. But three defects are still outstanding, and **two of them will
+make a step 11 check fail**, so read this first.
+
+1. **The admin console cannot save anything.** Every create, edit, delete and
+   publish in `/admin-teftef` posts to `/api/<resource>` on the *website*, but
+   `apps/web/app/api/` only contains `auth/login`, `auth/logout`, `auth/refresh`
+   and `contact`. There is no catch-all proxy and no `rewrites()` in
+   `next.config.mjs`, so those requests 404. Step 11's "publish a service" and
+   "submit the contact form" checks will fail. Fix: add a forwarding route at
+   `apps/web/app/api/[...path]/route.js`.
+
+2. **Uploaded media returns 401.** `apps/api/src/routes/index.js` mounts
+   `adminRoutes` at line 46 and the public media handler at line 57, and `media`
+   is in that router's `ADMIN_PREFIXES` set — so an anonymous `GET /media/...`
+   hits the auth guard and is rejected. Compounding it, `MEDIA_PUBLIC_URL=/media`
+   is root-relative, so stored URLs resolve against the website, which serves
+   nothing there. Step 11's "upload an image" check will fail. Fix: move the
+   media route above the admin router, and give it a route on the web app or an
+   absolute `MEDIA_PUBLIC_URL`.
+
+3. **`npm run backup` is broken.** `src/scripts/backup.js` uses `require()` in an
+   ESM module. See the note in step 12.
+
+Two more worth knowing about, which will not fail a deployment but will be
+noticed:
+
+- `/admin-teftef` itself returns 404 — there is no `(protected)/page.js`. The
+  Dashboard link in the nav points there, so use `/admin-teftef/dashboard`
+  directly. Step 11 already tests the full path.
+- There is no social card image: `app/og-image/route.js` exports no `GET`, so it
+  returns 405, and `lib/seo.js` points at `/og-default.png`, which does not
+  exist. Links shared to social media will render without a preview.
+
+---
+
 ## What gets deployed
 
 Two independent applications:
 
-| App | Directory | Startup | Port |
+| App | Directory | Startup file | Port |
 | --- | --- | --- | --- |
-| Website | `apps/web` | `npm run start` → `next start` | 3000 |
-| API | `apps/api` | `npm run start` → `node src/server.js` | 4000 |
+| Website | `apps/web` | `server.js` (or `npm run start`) | 3000 |
+| API | `apps/api` | `src/server.js` (or `npm run start`) | 4000 |
+
+Both read `PORT` from the environment, because Passenger assigns the port rather
+than letting the app pick it. See step 3.
 
 The browser never talks to the API directly. Admin requests go to the website,
 which forwards them over loopback. That means **the API port never needs to be
@@ -42,8 +83,43 @@ instead (step 5), which is safer than importing SQL by hand.
 
 ## 2. Upload the code
 
-Upload the repository **excluding** these:
+Two workable orders. Pick one and stay consistent — the mistake that causes
+stale pages is uploading the code but not the matching `.next`.
 
+### Option A — build on the server (recommended first time)
+
+Upload without `.next`, then build on the server:
+
+```bash
+tar --exclude=node_modules --exclude=.next --exclude=.env --exclude=.git \
+    --exclude=storage -czf virallink.tar.gz apps packages package.json .env.example
+```
+
+Upload to `/home/cpaneluser/`, **Extract** in File Manager, then in cPanel run
+**Run NPM Script → `npm run build:web`**. Compilation happens on the host, so
+there is never a mismatch between a build and the Node version it was made with.
+
+### Option B — build locally
+
+```bash
+npm install
+npm run build:web
+```
+
+Then include `.next` in the archive — **including** `apps/web/.next` this time.
+Cheaper on the host's CPU, which matters on shared plans, but you must upload a
+fresh `.next` with every code change.
+
+Either way you end up with:
+
+```
+/home/cpaneluser/virallink/
+├─ apps/
+│  ├─ api/
+│  └─ web/
+├─ packages/shared/
+├─ storage/media/        created in step 8
+└─ package.json
 ```
 node_modules
 .next
@@ -91,6 +167,13 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Application URL | `yourdomain.com` |
 | Application startup file | `server.js` |
 
+`apps/web/server.js` exists for exactly this reason: cPanel's **Application
+startup file** field wants a file path, not a command, so `next start` cannot be
+expressed in it. The wrapper boots the production Next server and binds to
+loopback on whatever `PORT` Passenger assigns. If your host's plugin offers a
+**Startup command** field instead, use `npm run start` there and leave the
+startup file blank.
+
 **Application 2 — API**
 
 | Field | Value |
@@ -101,7 +184,8 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Application URL | `api.yourdomain.com` |
 | Application startup file | `src/server.js` |
 
-The API startup file is `src/server.js`, not `server.js`.
+The API startup file is `src/server.js`, not `server.js`. It reads `PORT` and
+`API_HOST` from the environment, so match `PORT` to whatever Passenger assigned.
 
 A subdirectory URL such as `yourdomain.com/site` works, but the public site is
 much simpler at the domain root because every canonical URL and sitemap entry is
@@ -150,12 +234,15 @@ SITE_URL=https://yourdomain.com
 NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 NEXT_PUBLIC_API_PUBLIC_URL=
 API_INTERNAL_URL=http://127.0.0.1:4000
+NEXT_PUBLIC_ADMIN_PATH=/admin-teftef
 
 DB_HOST=localhost
 DB_PORT=3306
+DB_DIALECT=mysql
 DB_NAME=cpaneluser_virallink_prod
 DB_USER=cpaneluser_virallink_user
 DB_PASSWORD=<generated>
+DB_POOL_MAX=5
 
 JWT_SECRET=<openssl rand -base64 48>
 JWT_REFRESH_SECRET=<openssl rand -base64 48, different>
@@ -172,10 +259,42 @@ MEDIA_PUBLIC_URL=/media
 MEDIA_MAX_BYTES=10485760
 
 LOG_LEVEL=info
+
+# Required in production — see the note below. Omitting these makes the API
+# refuse to boot with "Unsafe production configuration".
+DB_SYNC_ALLOWED=false
+AUTO_MIGRATE=false
+AUTO_SEED=true
 ```
 
-`NEXT_PUBLIC_*` values are compiled into the client bundle at build time, so
-changing them requires a rebuild — not just a restart.
+### AUTO_MIGRATE must be false in production
+
+The API applies pending migrations and seeds the RBAC baseline at boot, which is
+what makes a local `npm run dev` work against an empty database with no manual
+step. That behaviour is **disabled in production**, and `config/env.js` exits at
+startup if `AUTO_MIGRATE` is true there:
+
+```
+Unsafe production configuration:
+  - AUTO_MIGRATE must be false in production. Passenger can start several
+    processes at once and concurrent migrations on a live database are not safe.
+```
+
+Passenger can start several processes at once, and two of them running the same
+migration at once is how you corrupt a schema. So in production you apply
+migrations deliberately, one process at a time, in step 6.
+
+`AUTO_SEED` stays `true`. The seeder is pure upsert — permissions, four roles,
+their grants, twelve financial categories and the company profile — so running it
+on every boot cannot duplicate a row or lose data. It is the same code
+`npm run seed` runs.
+
+The rest of the block is optional: `DB_DIALECT`, `DB_POOL_*`, `COOKIE_DOMAIN`,
+`COOKIE_PATH`, `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCK_MINUTES`, `RATE_LIMIT_*`,
+`MEDIA_ALLOWED_TYPES`, `ACTIVITY_RETENTION_DAYS`, `BACKUP_*` and `STORAGE_REGION`
+all have defaults in `config/env.js`. They are listed above so you know they
+exist. `NEXT_PUBLIC_*` values are compiled into the client bundle at build time,
+so changing them requires a rebuild — not just a restart.
 
 ### Option B — a .env file
 
@@ -199,14 +318,23 @@ Then seed the roles and permissions:
 npm run seed
 ```
 
-Both are safe to re-run: migrations are tracked in `sequelize_meta` and the
-seeder uses upserts. `npm run seed` contains no fake business data.
+Both are safe to re-run: applied migrations are recorded in the `SequelizeMeta`
+table and the seeder uses upserts. `npm run seed` contains no fake business data.
+Confirm what has run:
+
+```bash
+npm run migrate:status
+```
 
 If **Run NPM Script** is unavailable, use **Terminal**:
 
 ```bash
 cd ~/virallink/apps/api && npm run migrate && npm run seed
 ```
+
+Both steps are also what the API would do on its own if `AUTO_MIGRATE=true`, but
+step 5 sets it to `false`, so run them here. Re-run this section after every
+deploy that ships a new migration.
 
 ---
 
@@ -410,6 +538,25 @@ Then check by hand:
 Use the **absolute path to the node binary cPanel gave you** — `which node` from
 the terminal. A relative `node` will not resolve in cron.
 
+### Check the backup is actually producing files
+
+Do not assume it is working. After the first cron cycle:
+
+```bash
+ls -lt ~/virallink/storage/backups/
+tail -20 ~/virallink/storage/cron.log
+```
+
+An empty `backups/` directory after a cycle means the job is failing, and the
+usual cause is that the host has no `mysqldump` binary on the PATH for the cron
+environment. In that case use **phpMyAdmin → Export → Save as file** on a daily
+schedule instead, and confirm you can restore a copy before relying on it.
+
+> **Known issue.** `src/scripts/backup.js` currently calls `require()` inside a
+> file that uses ESM `import` (`apps/api/package.json` sets `"type": "module"`),
+> so it throws `ReferenceError: require is not defined` and the cron entry above
+> fails on every run. Fix this before treating backups as working.
+
 ---
 
 ## Redeploying
@@ -443,6 +590,7 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 
 - [ ] `NODE_ENV=production`
 - [ ] `DB_SYNC_ALLOWED=false` — **critical**. True in production can drop columns and destroy financial data. The API refuses to boot if it is true, but verify it is not set.
+- [ ] `AUTO_MIGRATE=false` — **critical**. The API refuses to boot in production if it is true, because Passenger can start concurrent processes and concurrent migrations on a live database are not safe.
 - [ ] `COOKIE_SECURE=true`
 - [ ] `JWT_SECRET` and `JWT_REFRESH_SECRET` are different 48-byte random values
 - [ ] `CORS_ORIGINS` lists only your real origin, no `*`
