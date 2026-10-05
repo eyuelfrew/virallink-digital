@@ -98,7 +98,7 @@ src/
 │  │  ├─ clients/page.js  team/page.js
 │  │  ├─ blog/page.js      blog/[slug]/page.js
 │  │  ├─ contact/page.js  careers/page.js  privacy/page.js  terms/page.js
-│  ├─ admin-teftef/            route group; noindex, authenticated
+│  ├─ vira-admin/              route group; noindex, authenticated
 │  │  ├─ login/page.js
 │  │  ├─ (protected)/layout.js + per-module pages + _components/
 │  ├─ api/auth/                Next route handlers: session cookie issue/clear only
@@ -234,7 +234,7 @@ social_links/testimonials/stats/jobs`, then indexes and FK constraints.
 /contact               form + details + LocalBusiness/Contact schema
 /careers               open roles from DB
 /privacy  /terms       static-ish, admin-editable
-/admin-teftef/*        never in nav, sitemap, or internal links
+/vira-admin/*        never in nav, sitemap, or internal links
 ```
 
 Every list page handles `?page=` and returns `loading.js` / `error.js` /
@@ -246,8 +246,8 @@ title, editable by an admin.
 ## 5. Admin routes and permission system
 
 ```
-/admin-teftef/login  (public-but-noindex)
-/admin-teftef/                 → dashboard
+/vira-admin/login  (public-but-noindex)
+/vira-admin/                 → dashboard
              /employees  /employees/[id]
              /shareholders
              /clients     /clients/[id]
@@ -260,12 +260,12 @@ title, editable by an admin.
              /settings    /settings/company  /settings/team  /settings/media
 ```
 
-`/admin-teftef` and everything under it is one route group. A `robots.js` plus
+`/vira-admin` and everything under it is one route group. A `robots.js` plus
 `robots.txt` disallow it, every admin page exports
 `metadata: { robots: { index: false, follow: false, nocache: true } }`, and the
 Nginx vhost also emits `X-Robots-Tag: noindex, nofollow` for that prefix.
 `proxy.js` performs a cheap cookie-presence check and redirects to
-`/admin-teftef/login?next=...`; the real session verification and RBAC happen in
+`/vira-admin/login?next=...`; the real session verification and RBAC happen in
 the server-side data layer and the API. A missing/forged cookie gets no data.
 
 RBAC is a permission matrix in `packages/shared/permissions.js`, seeded into the
@@ -344,8 +344,8 @@ diff. Secrets, password fields and file buffers are never stored in metadata.
   sub-page, `FAQPage` when an admin has added FAQs. Admin responses are never
   serialized into public pages.
 - **`app/sitemap.js`** builds sitemap index + children from the DB (only
-  published content), `app/robots.js` emits `Disallow: /admin-teftef` and
-  `/admin-teftef`, `Disallow: /api/`. Nginx adds the `X-Robots-Tag` header as a
+  published content), `app/robots.js` emits `Disallow: /vira-admin` and
+  `/vira-admin`, `Disallow: /api/`. Nginx adds the `X-Robots-Tag` header as a
   third layer.
 - **Performance** — `next/image` with AVIF/WebP, explicit `sizes`, blur
   placeholders, fonts via `next/font` self-hosted with `display: swap`, no
@@ -382,7 +382,7 @@ by what cPanel actually provides. Full runbook in `docs/DEPLOYMENT.md`.
 Browser
   ↓ HTTPS (cPanel AutoSSL, forced redirect)
 Apache / LiteSpeed  ← runs .htaccess: security headers, gzip/brotli,
-  │                    /admin-teftef X-Robots-Tag, static + /media cache
+  │                    /vira-admin X-Robots-Tag, static + /media cache
   ├─ Passenger "Setup Node.js App" #1  →  apps/web   (Next.js 16)
   └─ Passenger "Setup Node.js App" #2  →  apps/api   (Express 5)
                                               ↓

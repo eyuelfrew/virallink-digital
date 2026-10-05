@@ -88,6 +88,11 @@ const {
   Technology,
   ProjectTechnology,
   Job,
+  Task,
+  ContentDeliverable,
+  ContentMetric,
+  ContentStageEvent,
+  ClientProposal,
   FinancialCategory,
   FinancialTransaction,
   Invoice,
@@ -258,6 +263,56 @@ Object.defineProperty(models, 'ProjectTechnology', {
 
 Job.belongsTo(Department, { as: 'department', foreignKey: 'departmentId' });
 Department.hasMany(Job, { as: 'jobs', foreignKey: 'departmentId' });
+
+/* -------------------------------------------------------------------------- */
+/* Tasks                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The optional links are resolved as associations for display, but nothing
+ * cascades: deleting a client or project must not remove the tasks that mention
+ * it. `onDelete: 'SET NULL'` keeps the join clean while the task text survives.
+ */
+Task.belongsTo(Employee, { as: 'assignee', foreignKey: 'assigneeId' });
+Task.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
+Task.belongsTo(Project, { as: 'project', foreignKey: 'projectId' });
+
+Employee.hasMany(Task, { as: 'tasks', foreignKey: 'assigneeId' });
+Client.hasMany(Task, { as: 'tasks', foreignKey: 'clientId' });
+Project.hasMany(Task, { as: 'tasks', foreignKey: 'projectId' });
+
+/* -------------------------------------------------------------------------- */
+/* Client reporting                                                            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A deliverable belongs to a client and cannot outlive one, so this cascades.
+ * Metrics hang off a deliverable and cascade with it: deleting the video should
+ * take its view counts with it rather than orphaning rows nothing will ever read.
+ */
+Client.hasMany(ContentDeliverable, { as: 'deliverables', foreignKey: 'clientId' });
+ContentDeliverable.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
+
+ContentDeliverable.hasMany(ContentMetric, { as: 'metrics', foreignKey: 'deliverableId' });
+ContentMetric.belongsTo(ContentDeliverable, { as: 'deliverable', foreignKey: 'deliverableId' });
+
+/*
+ * Stage history cascades: deleting a piece of content discards its movement log
+ * with it. That is the one place a cascade is right here, because an orphaned
+ * event row would never be read again and would quietly distort cycle-time
+ * figures for every future report.
+ */
+ContentDeliverable.hasMany(ContentStageEvent, { as: 'stageEvents', foreignKey: 'deliverableId' });
+ContentStageEvent.belongsTo(ContentDeliverable, { as: 'deliverable', foreignKey: 'deliverableId' });
+ContentStageEvent.belongsTo(User, { as: 'actor', foreignKey: 'userId' });
+
+/* The assignee is a person, not a client record, so this points at Employee. */
+ContentDeliverable.belongsTo(Employee, { as: 'assignee', foreignKey: 'assigneeId' });
+Employee.hasMany(ContentDeliverable, { as: 'contentItems', foreignKey: 'assigneeId' });
+
+/* Proposals sit upstream of the pipeline rather than inside it. */
+Client.hasMany(ClientProposal, { as: 'proposals', foreignKey: 'clientId' });
+ClientProposal.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
 
 /* -------------------------------------------------------------------------- */
 /* Finance                                                                    */

@@ -73,13 +73,16 @@ export function PublishToggle({ resource, id, published, itemName = 'item' }) {
   const router = useRouter();
 
   async function toggle() {
-    const response = await fetch(`/api/${resource}/${id}`, {
+    const response = await fetch(`/api/${resource}/${id}/publish`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isPublished: !published }),
     });
 
-    if (response.ok) router.refresh();
+    // Refresh either way: on failure the row keeps its old state and the admin
+    // needs to see that nothing changed, rather than a button that silently did
+    // nothing.
+    router.refresh();
   }
 
   return (

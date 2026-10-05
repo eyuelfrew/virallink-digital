@@ -1,6 +1,7 @@
 import env from './config/env.js';
 import logger from './config/logger.js';
 import sequelize, { assertDatabaseConnection, syncSchema } from './config/database.js';
+import { bootstrapDatabase } from './config/bootstrap.js';
 import { createApp } from './app.js';
 import { pruneExpiredTokens } from './services/auth.service.js';
 import { pruneRevokedTokens } from './utils/cache.js';
@@ -11,8 +12,14 @@ import './models/index.js';
  *
  * Boot order matters: configuration is validated (and the process exits with a
  * named error if it is wrong), then the database connection is verified, then
- * the schema is reconciled in development, and only then does the HTTP server
- * start listening.
+ * pending migrations are applied and reference data seeded, then the schema is
+ * reconciled in development, and only then does the HTTP server start listening.
+ *
+ * Migrations run before the listener opens on purpose. A request that arrives
+ * while the schema is half-updated gets a confusing error; a process that refuses
+ * to listen until the schema is correct gets a clear one. On cPanel that shows up
+ * as the app not starting, which is a far better failure than a site that loads
+ * and 500s on every page.
  *
  * On cPanel, Passenger owns this process. `port` must match the port assigned to
  * the app in the Setup Node.js App panel; Passenger reads the listening port from
@@ -23,6 +30,12 @@ async function start() {
   // Fail fast on a bad database rather than starting a process that 500s on
   // every request.
   await assertDatabaseConnection();
+
+  // Bring the schema up to date and seed the RBAC baseline. Idempotent, and
+  // serialised across Passenger's several processes by an advisory lock. This is
+  // what makes a cPanel deploy a single action: start the app, and the database
+  // takes care of itself.
+  await bootstrapDatabase();
 
   // Development convenience: keep tables in step with the models. No-op unless
   // DB_SYNC_ALLOWED is true, and impossible in production.

@@ -26,6 +26,13 @@ import {
   SHARE_CLASS,
   ACTIVITY_ACTION,
   MEDIA_KIND,
+  TASK_STATUS,
+  TASK_PRIORITY,
+  DELIVERABLE_TYPE,
+  METRIC_PLATFORM,
+  METRIC_SOURCE,
+  CONTENT_STAGE,
+  PROPOSAL_STATUS,
   valuesOf,
 } from '@virallink/shared/enums';
 
@@ -539,6 +546,211 @@ export const definitions = {
       displayOrder: orderIndex(),
     },
     options: { indexes: [{ fields: ['isPublished', 'displayOrder'] }] },
+    paranoid: true,
+  },
+
+  /* ================================================================== */
+  /* Tasks                                                               */
+  /* ================================================================== */
+
+  /*
+   * Internal work items. Deliberately never exposed through the public API or
+   * any serializer in serializers/public.js — this is staff workload, not
+   * marketing content, and a task title can name a client or a deadline that
+   * should not be crawlable.
+   *
+   * The optional links are plain columns rather than associations on the
+   * assignment side: a task should still open if the client or project it
+   * referenced is later deleted, and a soft-deleted row must not take the task
+   * with it.
+   */
+  Task: {
+    tableName: 'tasks',
+    fields: {
+      id: pk(),
+      title: { type: DataTypes.STRING(200), allowNull: false },
+      description: longText(),
+      status: { type: DataTypes.ENUM(...valuesOf(TASK_STATUS)), allowNull: false, defaultValue: TASK_STATUS.TODO },
+      priority: { type: DataTypes.ENUM(...valuesOf(TASK_PRIORITY)), allowNull: false, defaultValue: TASK_PRIORITY.MEDIUM },
+      /** The staff member responsible. Not a foreign key, so the row survives deletion. */
+      assigneeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      projectId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      dueDate: optionalDate(DataTypes.DATEONLY),
+      /** Stamped when status first becomes done, so "closed this month" is a query. */
+      completedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        // The board's default query: open tasks, most urgent and nearest due first.
+        { fields: ['status', 'priority'] },
+        { fields: ['assigneeId', 'status'] },
+        { fields: ['dueDate'] },
+      ],
+    },
+    paranoid: true,
+  },
+
+  /* ================================================================== */
+  /* Client reporting                                                    */
+  /* ================================================================== */
+
+  /*
+   * Two tables, deliberately split.
+   *
+   * content_deliverables is *what we produced*: "a June reel for Acme". That is
+   * the count a client asks about first ("how many videos did you make me this
+   * month"), so it is a row in its own right rather than an attribute of a metric.
+   *
+   * content_metrics is *how it performed*: views, likes and comments for one
+   * deliverable in one month on one platform. Folding these together would make
+   * "videos produced" and "videos with views" the same number, and the two rarely
+   * are — content is often delivered late and accrues views afterwards.
+   *
+   * `month` is a zero-padded CHAR(7) string, not a DATE. Grouping on a string is
+   * exact, sorts chronologically, and cannot shift a bucket across a month
+   * boundary through a timezone. The zod schema validates it as a real YYYY-MM.
+   */
+  ContentDeliverable: {
+    tableName: 'content_deliverables',
+    fields: {
+      id: pk(),
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      title: { type: DataTypes.STRING(191), allowNull: false },
+      type: { type: DataTypes.ENUM(...valuesOf(DELIVERABLE_TYPE)), allowNull: false, defaultValue: DELIVERABLE_TYPE.VIDEO },
+      platform: { type: DataTypes.ENUM(...valuesOf(METRIC_PLATFORM)), allowNull: false, defaultValue: METRIC_PLATFORM.OTHER },
+      /** Where it was published. Null while the work exists but is not live yet. */
+      url: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      publishedAt: optionalDate(),
+      /** Only set when we actually host the file; most rows leave this null. */
+      mediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      notes: longText(),
+
+      /* ---- Production pipeline -------------------------------------- */
+      /*
+       * `stage` defaults to posted, not idea. Rows created before the pipeline
+       * existed were logged as finished work, so defaulting them to 'idea' would
+       * fill the board with a backlog that never existed.
+       */
+      stage: {
+        type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)),
+        allowNull: false,
+        defaultValue: CONTENT_STAGE.POSTED,
+      },
+      /** The day the crew is booked. A cost, fixed in advance. */
+      shootDate: optionalDate(DataTypes.DATEONLY),
+      /** When it is planned to go live, as distinct from when it did. */
+      scheduledFor: optionalDate(DataTypes.DATEONLY),
+      assigneeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /**
+       * How many times this came back from the client. Null means it was never
+       * sent for approval, which is not the same as sent once and accepted first
+       * time — the difference matters when reporting an approval rate.
+       */
+      revisionCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      /** One field per pipeline step so later material never overwrites earlier. */
+      idea: longText(),
+      brainstormNotes: longText(),
+      scriptBody: longText(),
+      approvalNotes: longText(),
+    },
+    options: {
+      indexes: [
+        // The report's core query: everything for one client in one month.
+        { fields: ['clientId', 'publishedAt'] },
+        { fields: ['clientId', 'type'] },
+        // The board's primary query: open work, by stage, soonest shoot first.
+        { fields: ['stage', 'shootDate'] },
+        { fields: ['scheduledFor'] },
+      ],
+    },
+    paranoid: true,
+  },
+
+  /*
+   * Append-only history of stage changes.
+   *
+   * This exists because current state cannot answer "how long does approval
+   * take" — once a card has moved on, its previous timestamps are gone. Every move
+   * writes a row recording when it entered the new stage, so cycle time per stage
+   * is a GROUP BY rather than a reconstruction.
+   *
+   * No `deletedAt`: this is a record of what happened, and a change to it cannot
+   * be silently undone by a stray delete.
+   */
+  ContentStageEvent: {
+    tableName: 'content_stage_events',
+    fields: {
+      id: pk(),
+      deliverableId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      fromStage: { type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)), allowNull: true, defaultValue: null },
+      toStage: { type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)), allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Why it moved. Essential on a return from approval. */
+      note: longText(),
+    },
+    options: {
+      // Cycle time is "time spent in toStage", so this index serves every
+      // stage-duration figure the weekly report shows.
+      indexes: [{ fields: ['toStage', 'createdAt'] }, { fields: ['deliverableId'] }],
+    },
+  },
+
+  /*
+   * An idea pack or proposal put to a client. Upstream of the pipeline rather than
+   * part of it: an accepted proposal becomes content, a draft one is only a
+   * document. Keeping it separate stops "we pitched this" cluttering the board.
+   */
+  ClientProposal: {
+    tableName: 'client_proposals',
+    fields: {
+      id: pk(),
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      title: { type: DataTypes.STRING(191), allowNull: false },
+      summary: longText(),
+      /** What is being proposed, e.g. "4 videos + 8 stories per month". */
+      scope: longText(),
+      status: {
+        type: DataTypes.ENUM(...valuesOf(PROPOSAL_STATUS)),
+        allowNull: false,
+        defaultValue: PROPOSAL_STATUS.DRAFT,
+      },
+      value: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: null },
+      proposedStart: optionalDate(DataTypes.DATEONLY),
+      /** When the client answered. Null while still awaiting a decision. */
+      respondedAt: optionalDate(),
+    },
+    options: { indexes: [{ fields: ['clientId', 'status'] }] },
+    paranoid: true,
+  },
+
+  ContentMetric: {
+    tableName: 'content_metrics',
+    fields: {
+      id: pk(),
+      deliverableId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /** 'YYYY-MM'. Zero padded so lexical order is chronological order. */
+      month: { type: DataTypes.STRING(7), allowNull: false },
+      platform: { type: DataTypes.ENUM(...valuesOf(METRIC_PLATFORM)), allowNull: false, defaultValue: METRIC_PLATFORM.OTHER },
+      /**
+       * Nullable rather than defaulting to 0, so the report can distinguish "not
+       * measured" from "measured and genuinely zero" — which is the first question
+       * a client asks about a blank figure.
+       */
+      views: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      likes: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      comments: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      shares: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Decimal, not integer: 12.5 hours of watch time is an ordinary figure. */
+      watchHours: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: null },
+      /** `manual` today; `api` reserved for a future platform sync. */
+      source: { type: DataTypes.ENUM(...valuesOf(METRIC_SOURCE)), allowNull: false, defaultValue: METRIC_SOURCE.MANUAL },
+    },
+    options: {
+      // One row per deliverable per month per platform. Enforced by the database
+      // as well as the service, so two staff saving at once cannot double-count.
+      indexes: [{ fields: ['deliverableId', 'month', 'platform'], unique: true }],
+    },
     paranoid: true,
   },
 

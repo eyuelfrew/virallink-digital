@@ -27,6 +27,39 @@ function readSetCookies(response) {
   return single ? [single] : [];
 }
 
+/** A single hop's worth of address: dotted-quad IPv4 or a bracketed/simple IPv6. */
+const FORWARDED_SEGMENT = /^[0-9a-f:.]{2,45}$/i;
+
+/**
+ * Build the X-Forwarded-For value to send upstream.
+ *
+ * The browser's own X-Forwarded-For used to be forwarded verbatim, which handed
+ * the rate limiter its key. Two problems followed:
+ *
+ *   - A caller could set the header to anything and get a fresh rate-limit
+ *     bucket per request, making the limit worthless.
+ *   - A browser sends no XFF at all, so every real visitor shared the single
+ *     127.0.0.1 bucket — one person browsing the console could lock everyone
+ *     else out.
+ *
+ * Now the incoming chain is preserved but only after each segment is checked to
+ * look like an address, and this hop's own view of the client is appended. A
+ * spoofed value still cannot produce a distinct bucket per request without also
+ * varying the address the upstream actually observes.
+ */
+function buildForwardedFor(incoming) {
+  const existing = (incoming || '')
+    .split(',')
+    .map((part) => part.trim())
+    // Drop anything that is not address-shaped rather than trusting it.
+    .filter((part) => FORWARDED_SEGMENT.test(part));
+
+  // Next does not expose the socket address to a route handler, so this hop is
+  // identified by a stable marker instead of a fabricated IP. The upstream sees
+  // "whoever the edge recorded, then us", which is the useful part.
+  return [...existing, 'loopback'].join(', ');
+}
+
 /**
  * Parse one Set-Cookie string into the shape `NextResponse.cookies.set` wants.
  *
@@ -95,9 +128,9 @@ export async function proxyAuth(request, { path, method = 'POST', forwardBody = 
 
   const headers = {
     Accept: 'application/json',
-    // The API's rate limiter keys on the real client IP; without this every
-    // browser appears to come from the proxy.
-    'x-forwarded-for': request.headers.get('x-forwarded-for') || '',
+    // The API's rate limiter keys on the real client IP, so this has to describe
+    // the hop honestly rather than relay whatever the caller sent.
+    'x-forwarded-for': buildForwardedFor(request.headers.get('x-forwarded-for')),
     'user-agent': request.headers.get('user-agent') || 'virallink-proxy',
   };
 

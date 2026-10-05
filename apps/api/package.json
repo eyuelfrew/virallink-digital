@@ -39,13 +39,13 @@
     "express-rate-limit": "8.7.0",
     "helmet": "8.3.0",
     "jose": "6.2.12",
-    "multer": "2.0.2",
+    "multer": "2.4.0",
     "mysql2": "3.24.5",
-    "nanoid": "5.1.6",
+    "nanoid": "5.1.16",
     "pino": "10.3.1",
     "pino-http": "11.0.0",
-    "sharp": "0.35.5",
     "sequelize": "6.37.8",
+    "sharp": "0.35.5",
     "zod": "4.6.5"
   },
   "devDependencies": {

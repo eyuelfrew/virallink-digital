@@ -40,7 +40,7 @@ const nextConfig = {
       {
         // The admin must never be indexed. This is one of three layers; the others
         // are the noindex metadata in the admin layout and the robots.txt rule.
-        source: '/admin-teftef/:path*',
+        source: '/vira-admin/:path*',
         headers: [
           { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
           { key: 'X-Frame-Options', value: 'DENY' },

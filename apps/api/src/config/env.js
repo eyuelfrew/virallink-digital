@@ -91,8 +91,36 @@ const schema = z.object({
 
   CORS_ORIGINS: csv([process.env.SITE_URL]),
 
+  /*
+   * First-run bootstrap, on by default in every environment.
+   *
+   * These default to true rather than being switched on per environment because
+   * the deployment target cannot run them any other way: cPanel only starts the
+   * Node.js application, so there is no shell or npm-script button available to
+   * apply a schema change. Making the app depend on a manual step would mean the
+   * next deploy silently serves requests against a schema that is one migration
+   * behind.
+   *
+   * Both steps are idempotent, and the migration step is serialised with a MySQL
+   * advisory lock so the several Passenger processes that start together cannot
+   * run the same migration at once. See config/bootstrap.js.
+   *
+   * Turning AUTO_MIGRATE off is only sensible for a host where a human *can* run
+   * `npm run migrate` deliberately — a staging box, say. On this host, off means
+   * the schema is never updated.
+   */
+  AUTO_MIGRATE: booleanish.default('true'),
+  AUTO_SEED: booleanish.default('true'),
+
   RATE_LIMIT_WINDOW_MS: numericString(900000),
-  RATE_LIMIT_MAX: numericString(300),
+  // Per 15 minutes, and it now covers only the anonymous public surface — see the
+  // note where it is mounted in app.js. One public page view fans out into
+  // roughly eight API calls (company, services, portfolio, team, testimonials,
+  // clients, blog, taxonomy), and in this deployment every one of them shares a
+  // single key because they all arrive over loopback. At 300 the budget was
+  // about 37 page views for the whole site, which a single busy visitor could
+  // exhaust. Sized for browsing, not to make the limit unreachable.
+  RATE_LIMIT_MAX: numericString(1200),
   RATE_LIMIT_AUTH_MAX: numericString(10),
   RATE_LIMIT_CONTACT_MAX: numericString(5),
 

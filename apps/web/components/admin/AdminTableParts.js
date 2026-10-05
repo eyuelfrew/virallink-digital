@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Search, X } from 'lucide-react';
+import { NavIcon } from './icons';
 
 /**
  * Toolbar for admin tables: search box and select filters.
@@ -106,12 +107,19 @@ export function AdminToolbar({ basePath, searchPlaceholder = 'Search', currentSe
 }
 
 /** Empty state inside a table panel. */
+/**
+ * Empty state for an admin table.
+ *
+ * `icon` is a lucide icon *name*, not a component. This is a Client Component and
+ * every page that renders it is a Server Component, so a component cannot cross
+ * that boundary — it is a function, and React rejects anything that is not a
+ * plain object ("Only plain objects can be passed to Client Components from
+ * Server Components"). The name is resolved to a component here instead.
+ */
 export function TableEmpty({ icon, title, description, hasFilters = false }) {
-  const EmptyIcon = icon || null;
-
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      {EmptyIcon ? <EmptyIcon className="size-8 text-ink-subtle" aria-hidden="true" /> : null}
+      {icon ? <NavIcon name={icon} className="size-8 text-ink-subtle" /> : null}
 
       <p className="mt-4 text-sm font-semibold text-ink-soft">{title}</p>
 

@@ -54,26 +54,41 @@ Create the database once:
 CREATE DATABASE virallink CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### Build the schema and seed the roles
+### The schema and the roles build themselves
 
-```bash
-npm run migrate     # creates 36 tables
-npm run seed         # 38 permissions, 4 roles, financial categories
-```
+There is nothing to run. The first `npm run dev:api` creates all 41 tables, applies
+the 11 migrations and seeds 44 permissions, 4 roles, 12 financial categories and
+the company profile — then does nothing on every boot after that.
 
-`npm run seed` is the only seeder that runs in production. It contains **no fake
-company data** — no clients, employees, testimonials or statistics. Everything
-public is entered by an administrator and stays hidden until published.
+Both steps are idempotent, which is what makes that safe:
+
+- a migration runs once, then is recorded in the `SequelizeMeta` table;
+- the seeder upserts, so re-running updates rows rather than duplicating them.
+
+This is a consequence of the deployment target rather than a preference. On cPanel
+the only thing that can be started is the Node.js application, so there is no shell
+to run a migration from. Deploying therefore has to be a single action.
+
+The seeder contains **no fake company data** — no clients, employees,
+testimonials or statistics. Everything public is entered by an administrator and
+stays hidden until published.
+
+`npm run migrate` and `npm run seed` still exist and reach the same end state.
+They are a developer convenience, not a deployment step.
 
 ### Create your first administrator
 
-```bash
-npm run create:admin --workspace @virallink/api
-```
+On a fresh install, open <http://localhost:3000/vira-admin/login> — the page
+offers **first-time setup** instead of the sign-in form. Enter a name, email and
+password, and the account is created with the SUPER_ADMIN role. The option
+disappears permanently once an account exists; the API refuses the request, so it
+cannot be reached by typing the URL.
 
-It prompts for a name, email, role and password, so the password never lands in
-shell history. Requirements: at least 12 characters mixing upper case, lower case
-and a number.
+Requirements: at least 12 characters mixing upper case, lower case and a number.
+
+If you have a shell, `npm run create:admin --workspace @virallink/api` does the
+same thing and also prompts for a role, so the password never lands in shell
+history.
 
 ---
 
@@ -100,7 +115,7 @@ npm run dev:web
 ```
 
 Listens on `http://localhost:3000`. Sign in at
-**http://localhost:3000/admin-teftef/login**.
+**http://localhost:3000/vira-admin/login**.
 
 ### Both at once
 
@@ -115,17 +130,31 @@ isolation.
 
 ## Schema changes during development
 
-`.env` has `DB_SYNC_ALLOWED=true`, so the API runs `sequelize.sync({ alter: true })`
-on every start. Edit a model, restart the API, and the table follows. You never
-write a migration for a local field tweak.
+Write a migration in `apps/api/src/migrations/`, named
+`YYYYMMDDHHMMSS-description.cjs` and exporting `up(queryInterface, Sequelize)`.
+Restart the API. The boot sequence applies it and records it in `SequelizeMeta`,
+so there is no separate command to remember and the change is reproducible on the
+server for free — which is what makes deploying a single action.
 
-**This is development only.** `config/env.js` terminates the process if
-`DB_SYNC_ALLOWED` is true when `NODE_ENV=production`, because `alter: true` can
-drop a column and destroy shareholder or financial data. Production applies
-schema changes with `npm run migrate`.
+Use `createTable`, `addColumns`, `addIndex`, `columns` and friends from
+`apps/api/src/migration-helpers/` rather than calling `queryInterface` directly.
+Two reasons, both learned the hard way:
 
-When you finish a feature, write a real migration so the change is reproducible
-on the server — see `apps/api/src/migrations/`.
+- the helpers convert `camelCase` to `snake_case`, so a migration reads like the
+  models. Writing `queryInterface.addColumn` directly creates a column literally
+  named `shootDate` while the model looks for `shoot_date`, and every query then
+  fails with "Unknown column";
+- `addColumns` tolerates a column that already exists. MySQL commits DDL
+  implicitly, so a migration that fails partway is **not** rolled back — its
+  earlier statements stay behind with no `SequelizeMeta` row, and the next boot
+  dies on "Duplicate column". With the helper, fixing the migration and
+  restarting is the whole recovery.
+
+`DB_SYNC_ALLOWED` is `false` by default and the API never calls
+`sequelize.sync()`. Setting it to `true` runs `sync({ alter: true })` on every
+start, which is convenient while iterating on models but can drop a column and
+destroy shareholder or financial data. It is a deliberate opt-in, and
+`config/env.js` terminates the process if it is true when `NODE_ENV=production`.
 
 ---
 
@@ -184,7 +213,7 @@ virallink/
 │  │  └─ test/
 │  └─ web/                  Next.js 16 App Router, JavaScript
 │     ├─ app/(public)/      public pages
-│     ├─ app/admin-teftef/  management console
+│     ├─ app/vira-admin/  management console
 │     ├─ app/api/           proxy + contact form route handlers
 │     ├─ components/
 │     └─ lib/               api, seo, auth, sanitize, utils

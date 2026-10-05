@@ -10,21 +10,10 @@ import {
   Briefcase, FolderKanban, Newspaper, Inbox, UserRound, Building2, PieChart,
   ArrowLeftRight, ReceiptText, ChartColumn, Building, Image, ShieldCheck, History,
 } from 'lucide-react';
+import { NavIcon } from './icons';
 import { cn } from '@/lib/utils';
 import BrandMark from '@/components/brand/BrandLogo';
 import ThemeToggle from '@/components/site/ThemeToggle';
-
-/** Map icon names from the shared nav config to components. */
-const ICONS = {
-  LayoutDashboard, FileStack, Users, Wallet, Settings,
-  Briefcase, FolderKanban, Newspaper, Inbox, UserRound, Building2, PieChart,
-  ArrowLeftRight, ReceiptText, ChartColumn, Building, Image, ShieldCheck, History,
-};
-
-function NavIcon({ name, className }) {
-  const Icon = ICONS[name] || FileStack;
-  return <Icon className={className} aria-hidden="true" />;
-}
 
 /**
  * Admin shell: sidebar, header, content area.

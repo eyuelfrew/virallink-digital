@@ -32,7 +32,7 @@ export const INTERNAL_API_URL =
 
 /** The admin area. Its path is deliberately not guessable-looking but is NOT a
  * security control — authentication is what protects it. */
-export const ADMIN_PATH = process.env.NEXT_PUBLIC_ADMIN_PATH || '/admin-teftef';
+export const ADMIN_PATH = process.env.NEXT_PUBLIC_ADMIN_PATH || '/vira-admin';
 
 /** Route prefixes that must never be indexed. */
 export const NOINDEX_PREFIXES = [ADMIN_PATH];

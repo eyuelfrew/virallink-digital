@@ -16,6 +16,7 @@ import sequelize from '../src/config/database.js';
 import env from '../src/config/env.js';
 import bcrypt from 'bcrypt';
 import models from '../src/models/index.js';
+import { ALL_PERMISSIONS } from '@virallink/shared/permissions';
 
 const { User, Role, Employee, Client, Shareholder, FinancialTransaction, Project, Service, Department } = models;
 
@@ -205,6 +206,14 @@ for (const path of ['/api/v1/shareholders', '/api/v1/finance/transactions', '/ap
 /* Super admin session                                                         */
 /* -------------------------------------------------------------------------- */
 
+/*
+ * Provision the super admin the same way the FINANCE and EDITOR testers are
+ * provisioned below. This account used to have to exist already, which meant the
+ * suite could not run against an empty database — every assertion after the login
+ * silently degraded to testing 401s instead of RBAC. Safe to re-run.
+ */
+await createRoleUser('admin@virallink.test', 'SUPER_ADMIN', 'TestAdmin123');
+
 const admin = createClient();
 
 const badLogin = await admin('/api/v1/auth/login', post({ email: 'admin@virallink.test', password: 'wrong' }));
@@ -212,7 +221,23 @@ record('login with wrong password is refused', badLogin.status === 401);
 
 const login = await admin('/api/v1/auth/login', post({ email: 'admin@virallink.test', password: 'TestAdmin123' }));
 record('login succeeds', login.status === 200, JSON.stringify(login.body).slice(0, 200));
-record('login returns 38 permissions', login.body?.data?.user?.permissions?.length === 38, `got ${login.body?.data?.user?.permissions?.length}`);
+/*
+ * Counted from the source of truth rather than hard-coded. A literal here broke
+ * every time a permission was added — it failed for the wrong reason (the
+ * assertion, not the feature) and gave no clue which permission was missing.
+ * What this actually verifies is that a SUPER_ADMIN receives the *complete*
+ * set, so it compares against the shared list.
+ */
+record(
+  'login returns every permission',
+  login.body?.data?.user?.permissions?.length === ALL_PERMISSIONS.length,
+  `got ${login.body?.data?.user?.permissions?.length}, expected ${ALL_PERMISSIONS.length}`,
+);
+
+const missing = ALL_PERMISSIONS.filter(
+  (permission) => !login.body?.data?.user?.permissions?.includes(permission),
+);
+record('no permission is missing from a super admin', missing.length === 0, missing.join(', '));
 
 const me = await admin('/api/v1/auth/me');
 record('session cookie authenticates /me', me.status === 200);

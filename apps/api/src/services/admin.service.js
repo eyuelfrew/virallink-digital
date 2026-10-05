@@ -450,11 +450,25 @@ export async function getClient(id) {
         as: 'projects',
         include: [{ model: Service, as: 'service', attributes: ['id', 'title'] }],
       },
-      { model: ClientNote, as: 'clientNotes', include: [{ model: models.User, as: 'author', attributes: ['id', 'name'] }] },
+      {
+        model: ClientNote,
+        as: 'clientNotes',
+        include: [{ model: models.User, as: 'author', attributes: ['id', 'name'] }],
+        // Newest first. Without an explicit order these come back in whatever order
+        // the join produces, which is not stable between requests — a notes
+        // timeline that reshuffles on refresh reads as corruption.
+        order: [['createdAt', 'DESC']],
+        separate: true,
+      },
       {
         model: ClientCommunication,
         as: 'communications',
         include: [{ model: models.User, as: 'author', attributes: ['id', 'name'] }],
+        order: [['occurredAt', 'DESC']],
+        // `separate` runs this as its own query. Without it, ordering a hasMany
+        // that itself has an include forces a LEFT JOIN and Sequelize silently
+        // applies the order to the *user* rows instead.
+        separate: true,
       },
       { model: Invoice, as: 'invoices' },
     ],

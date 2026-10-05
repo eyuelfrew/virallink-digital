@@ -126,13 +126,71 @@ async function createJoinTable(queryInterface, Sequelize, tableName, { left, rig
   });
 }
 
+/**
+ * `queryInterface.addColumn` with camelCase -> snake_case conversion.
+ *
+ * Writing `addColumn` directly is a trap. MySQL column names are case-sensitive in
+ * effect: `shootDate` and `shoot_date` are different columns, so a migration that
+ * adds one and a model that expects the other leaves every query failing with
+ * "Unknown column". This exists so migrations can be written in the same
+ * camelCase style as the models.
+ *
+ * Tolerates an already-present column. MySQL commits DDL implicitly, so a
+ * migration that fails partway leaves its earlier statements behind and is *not*
+ * rolled back — the record in SequelizeMeta is never written, so the next run
+ * retries and dies on "Duplicate column". Swallowing that specific error is what
+ * makes a half-applied migration recoverable by simply running it again, which is
+ * the only practical repair when there is no transaction to lean on.
+ */
+async function addColumn(queryInterface, tableName, attribute) {
+  // `attribute` is a single-entry object: { shootDate: { type: ... } }. Running it
+  // through toColumnNames yields the snake_case key with the definition untouched,
+  // so one Object.entries destructure gives both halves.
+  const [name, definition] = Object.entries(toColumnNames(attribute))[0];
+
+  if (!name) throw new Error(`addColumn was called without a column name for ${tableName}`);
+
+  try {
+    await queryInterface.addColumn(tableName, name, definition);
+  } catch (error) {
+    if (!/duplicate column|already exists/i.test(error?.message || error?.sqlMessage || '')) throw error;
+  }
+
+  return name;
+}
+
+/** Add several columns in one call, all snake_case converted. */
+async function addColumns(queryInterface, tableName, attributes) {
+  const added = [];
+  for (const [key, definition] of Object.entries(attributes)) {
+    added.push(await addColumn(queryInterface, tableName, { [key]: definition }));
+  }
+  return added;
+}
+
+/**
+ * `queryInterface.removeColumn`, tolerating a column that is already gone, so a
+ * `down()` can be re-run after a partial failure.
+ */
+async function removeColumn(queryInterface, tableName, attributeName) {
+  const name = snakeCase(attributeName);
+  try {
+    await queryInterface.removeColumn(tableName, name);
+  } catch (error) {
+    if (!/unknown column|does not exist/i.test(error?.message || error?.sqlMessage || '')) throw error;
+  }
+}
+
 module.exports = {
+  addColumn,
+  addColumns,
   addConstraint,
   addIndex,
   columns,
   createJoinTable,
   createTable,
   dropTableIfExists,
+  removeColumn,
   snakeCase,
   toColumnFields,
   toColumnNames,

@@ -111,21 +111,19 @@ built from `NEXT_PUBLIC_SITE_URL`.
 
 ## 4. Install dependencies
 
-Inside each app's entry, click **Run NPM Script**:
-
-```
-npm install
-```
-
-Or use the **Terminal** in cPanel:
+Upload the code **including** `node_modules`, or run `npm install` once at the
+repository root from **Run NPM Script** or the cPanel Terminal:
 
 ```bash
 cd ~/virallink && npm install
 ```
 
-Install **once at the repository root**. npm workspaces then links
-`apps/api` and `apps/web` against the hoisted `node_modules`. Running it
-separately per app duplicates ~300MB and can break workspace resolution.
+Install **once at the repository root**. npm workspaces then links `apps/api` and
+`apps/web` against the hoisted `node_modules`. Running it separately per app
+duplicates ~300MB and can break workspace resolution.
+
+Note what is *not* needed: no migrate step, no seed step, no admin-creation
+command. The API does all three on startup — see steps 6 and 7.
 
 ---
 
@@ -172,6 +170,11 @@ MEDIA_PUBLIC_URL=/media
 MEDIA_MAX_BYTES=10485760
 
 LOG_LEVEL=info
+
+# First-run bootstrap. Both default to true, so you do not need to set them.
+# See step 6.
+AUTO_MIGRATE=true
+AUTO_SEED=true
 ```
 
 `NEXT_PUBLIC_*` values are compiled into the client bundle at build time, so
@@ -185,39 +188,79 @@ directory.
 
 ---
 
-## 6. Run migrations
+## 6. Schema and reference data: automatic
 
-**Setup Node.js App → API app → Run NPM Script**:
+**There is nothing to run here.** The API applies pending migrations and seeds the
+RBAC baseline every time it starts, before it opens its listening port.
 
-```
-npm run migrate
-```
+This is deliberate and is a consequence of the hosting target, not a shortcut. On
+cPanel the only thing that can be started is the Node.js application itself, so
+there may be no shell, no cron and no "Run NPM Script" button to apply a schema
+change from. Making a deploy depend on a manual step means the next one silently
+serves requests against a schema that is one migration behind.
 
-Then seed the roles and permissions:
+Both operations are idempotent, which is what makes running them on every boot
+safe:
 
-```
-npm run seed
-```
+- a migration runs **once**, then its filename is recorded in the `SequelizeMeta`
+  table, so it never runs twice;
+- the seeder **upserts**, so re-running updates rows rather than duplicating them.
+  It contains no business data — no clients, employees, testimonials or statistics.
 
-Both are safe to re-run: migrations are tracked in `sequelize_meta` and the
-seeder uses upserts. `npm run seed` contains no fake business data.
+On the first boot against an empty database this creates all 41 tables, runs the
+11 migrations and seeds 44 permissions, 4 roles, 12 financial categories and the
+company profile. Every later boot finds nothing pending and takes a few
+milliseconds.
 
-If **Run NPM Script** is unavailable, use **Terminal**:
+**On concurrent processes:** Passenger starts several processes for one
+application and they all execute this at once on a deploy. Two of them running the
+same migration simultaneously is how a schema gets corrupted, so the migration
+step is serialised with a MySQL advisory lock. The second process waits for the
+lock, then finds nothing pending.
 
-```bash
-cd ~/virallink/apps/api && npm run migrate && npm run seed
-```
+Set `AUTO_MIGRATE=false` or `AUTO_SEED=false` only on a host where you *can* run
+`npm run migrate` deliberately. On this host, off means the schema is never
+updated.
+
+**If a migration fails**, the API logs the error and does not start. That is
+intended: an app that refuses to boot is a visible failure, whereas one that starts
+against a half-built schema 500s on every page with nothing in the log to explain
+it. The migration helpers tolerate an already-present column, so a migration that
+failed partway is recoverable simply by fixing it and restarting.
+
+You can still run these by hand on a machine that has a shell — `npm run migrate`
+and `npm run seed` reach exactly the same end state. They are a developer
+convenience, not a deployment step.
 
 ---
 
-## 7. Create the administrator
+## 7. Create the first administrator
 
-```bash
-cd ~/virallink/apps/api && npm run create:admin
-```
+**Done in the browser, not the terminal.**
 
-Interactive, so the password never appears in shell history. Do this over SSH,
-not the web terminal, if your host logs terminal sessions.
+Open `https://yourdomain.com/vira-admin/login`. On an install with no accounts the
+page shows **first-time setup** instead of the sign-in form: enter a name, email
+and password, and the account is created with the SUPER_ADMIN role.
+
+That form exists for the same reason as the automatic migrations. The schema can
+build itself, but a person cannot, and without this a fresh install would have no
+way to sign in and no way to create the first account. The hosting target gives no
+shell to run `npm run create:admin` in.
+
+Two things make it safe:
+
+- **The API refuses the request the moment any account exists** — permanently, not
+  just while the form is hidden. Two simultaneous requests on an empty install
+  cannot both pass the "no users" check, because the count is re-verified inside
+  the insert.
+- It returns nothing but a boolean about whether setup is needed, so it cannot be
+  used to discover whether an email address has an account.
+
+The password rules are the same as the admin user form: at least 12 characters
+with an upper case letter, a lower case letter and a number.
+
+To add further accounts afterwards, use **System → Users & roles** in the admin,
+or `npm run create:admin` from a shell if you have one.
 
 ---
 
@@ -339,7 +382,7 @@ To apply the admin `X-Robots-Tag` rule, add this before the header block:
 
 ```apache
 RewriteEngine On
-RewriteCond %{REQUEST_URI} ^/admin-teftef
+RewriteCond %{REQUEST_URI} ^/vira-admin
 RewriteRule ^(.*)$ $1 [E=REDIRECT_ADMIN:1]
 ```
 
@@ -369,27 +412,43 @@ curl https://api.yourdomain.com/health
 
 # Public site
 curl -I https://yourdomain.com/
-curl -I https://yourdomain.com/admin-teftef/dashboard
+curl -I https://yourdomain.com/vira-admin/dashboard
 ```
 
 The second must return `307` redirecting to the login page — proof the auth gate
 works.
+
+Check that the bootstrap actually ran. The API log on startup contains:
+
+```
+AUTO_MIGRATE is on — applying pending migrations
+AUTO_SEED is on — seeding reference data
+```
+
+and nothing after that on a database that was already current. If you see
+`migration applied` lines, this deploy brought the schema up to date — which is
+the expected result of the first deploy and of any deploy carrying a new migration.
+
+Then open `https://yourdomain.com/vira-admin/login` in a browser. On a fresh
+install it offers **first-time setup**; create the administrator, and the form
+disappears. On an install that already has accounts it shows the normal sign-in
+form and the setup option is gone.
 
 Confirm the index protections:
 
 ```bash
 curl -I https://yourdomain.com/robots.txt | grep -i "x-robots\|content-type"
 curl https://yourdomain.com/robots.txt | grep admin
-curl -I https://yourdomain.com/admin-teftef/dashboard | grep -i "x-robots"
+curl -I https://yourdomain.com/vira-admin/dashboard | grep -i "x-robots"
 ```
 
 Then check by hand:
 
-- [ ] Sign in at `/admin-teftef/login`
+- [ ] Sign in at `/vira-admin/login`
 - [ ] Publish a service — `/services/<slug>` appears without a redeploy
 - [ ] The new URL is in `/sitemap.xml`
 - [ ] An unpublished service returns 404 on its page
-- [ ] `/admin-teftef/*` does not appear in the sitemap
+- [ ] `/vira-admin/*` does not appear in the sitemap
 - [ ] Upload an image — it appears with the right dimensions
 - [ ] Submit the contact form — the enquiry shows in the admin inbox
 
@@ -444,6 +503,7 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 - [ ] `NODE_ENV=production`
 - [ ] `DB_SYNC_ALLOWED=false` — **critical**. True in production can drop columns and destroy financial data. The API refuses to boot if it is true, but verify it is not set.
 - [ ] `COOKIE_SECURE=true`
+- [ ] `AUTO_MIGRATE=true` and `AUTO_SEED=true` — or simply unset, since both default to true. Do **not** set `AUTO_MIGRATE=false` on this host: there is no shell to run `npm run migrate` from, so the schema would never be updated.
 - [ ] `JWT_SECRET` and `JWT_REFRESH_SECRET` are different 48-byte random values
 - [ ] `CORS_ORIGINS` lists only your real origin, no `*`
 - [ ] `SITE_URL` and `NEXT_PUBLIC_SITE_URL` both use `https://`
@@ -452,8 +512,9 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 - [ ] Database user is not `root`
 - [ ] Daily backups configured and a restore actually tested
 - [ ] Only `SUPER_ADMIN` accounts can reach user and role management
-- [ ] `X-Robots-Tag` present on `/admin-teftef/*` responses
-- [ ] `https://yourdomain.com/robots.txt` disallows `/admin-teftef`
+- [ ] First administrator created, and `/vira-admin/login` no longer offers first-time setup
+- [ ] `X-Robots-Tag` present on `/vira-admin/*` responses
+- [ ] `https://yourdomain.com/robots.txt` disallows `/vira-admin`
 
 ## Operational notes
 

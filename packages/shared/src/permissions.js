@@ -65,7 +65,39 @@ export const PERMISSIONS = Object.freeze({
   // Audit
   ACTIVITY_READ: 'activity.read',
   ACTIVITY_READ_OWN: 'activity.read_own',
+
+  // Task management (internal — never exposed on the public site)
+  TASK_READ: 'task.read',
+  TASK_WRITE: 'task.write',
+  TASK_DELETE: 'task.delete',
+  TASK_ASSIGN: 'task.assign',
+
+  // Content production pipeline. Separate from client.* because moving a card
+  // through approval is day-to-day production work, not client record-keeping —
+  // a content editor needs to run the board without being able to edit a
+  // client's contract value.
+  CONTENT_READ: 'content.read',
+  CONTENT_WRITE: 'content.write',
 });
+
+/**
+ * First path segment of every admin resource.
+ *
+ * Shared deliberately. The API router needs it to decide which paths it owns, and
+ * the website's `/api/[...path]` forwarding route needs the identical set so it
+ * does not forward paths the API would only reject. Duplicating this list is how a
+ * newly added resource ends up answering 404 from the browser with nothing in the
+ * server logs — which is exactly what happened with `deliverables`.
+ *
+ * A routing concern, not an authorisation one: the API still requires a session
+ * and a per-route permission behind every one of these segments.
+ */
+export const ADMIN_RESOURCE_PREFIXES = Object.freeze([
+  'dashboard', 'company', 'employees', 'shareholders', 'clients', 'services',
+  'portfolio', 'blog', 'inquiries', 'finance', 'activity', 'media',
+  'testimonials', 'stats', 'jobs', 'departments', 'users', 'roles', 'tasks',
+  'deliverables', 'content', 'proposals',
+]);
 
 export const ALL_PERMISSIONS = Object.freeze(Object.values(PERMISSIONS));
 
@@ -95,6 +127,10 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.BLOG_WRITE,
     PERMISSIONS.TESTIMONIAL_WRITE,
     PERMISSIONS.JOB_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_DELETE,
+    PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
     PERMISSIONS.ACTIVITY_READ_OWN,
@@ -112,6 +148,13 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.BLOG_WRITE,
     PERMISSIONS.TESTIMONIAL_WRITE,
     PERMISSIONS.JOB_WRITE,
+    // Editors and admins run the production board day to day.
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    // Editors get the task board but not deletion — removing a task is an admin action.
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
   ],
@@ -123,6 +166,8 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.CLIENT_READ,
     PERMISSIONS.INQUIRY_READ,
     PERMISSIONS.SHAREHOLDER_READ,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.ACTIVITY_READ,
   ],
@@ -140,16 +185,46 @@ export const ROLE_LABELS = Object.freeze({
  * whether to render the link; the API independently enforces the same check.
  */
 export const ADMIN_NAV = Object.freeze([
-  { label: 'Dashboard', href: '/admin-teftef', icon: 'LayoutDashboard', permission: null, exact: true },
+  // Points at the dashboard rather than the bare admin prefix: there is no
+  // page.js at /vira-admin, so linking there would 404, and `exact` would then
+  // never match, leaving the Dashboard item unhighlighted on every page.
+  { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: null, exact: true },
+  // Internal workload, not content. Kept as its own top-level item rather than
+  // inside Content so it is never mistaken for something publishable.
+  {
+    label: 'Tasks',
+    href: '/vira-admin/tasks',
+    icon: 'ListTodo',
+    permission: PERMISSIONS.TASK_READ,
+  },
+  /*
+   * The production pipeline, as its own top-level group.
+   *
+   * This is the module the team actually works in day to day, so it sits above the
+   * publishing-oriented Content group rather than buried inside it. Putting the
+   * board, the weekly report and proposals here rather than scattered through
+   * Content is the fix for the discoverability problem: everything built for a
+   * client workflow should be reachable from one place in the sidebar.
+   */
+  {
+    label: 'Production',
+    icon: 'ListTodo',
+    permission: null,
+    children: [
+      { label: 'Pipeline board', href: '/vira-admin/content', icon: 'FolderOpen', permission: PERMISSIONS.CONTENT_READ },
+      { label: 'Weekly report', href: '/vira-admin/content/weekly', icon: 'ChartColumn', permission: PERMISSIONS.CONTENT_READ },
+      { label: 'Proposals', href: '/vira-admin/content/proposals', icon: 'Target', permission: PERMISSIONS.CONTENT_READ },
+    ],
+  },
   {
     label: 'Content',
     icon: 'FileStack',
     permission: null,
     children: [
-      { label: 'Services', href: '/admin-teftef/services', icon: 'Briefcase', permission: PERMISSIONS.SERVICE_READ },
-      { label: 'Portfolio', href: '/admin-teftef/portfolio', icon: 'FolderKanban', permission: PERMISSIONS.PROJECT_READ },
-      { label: 'Blog', href: '/admin-teftef/blog', icon: 'Newspaper', permission: PERMISSIONS.BLOG_READ },
-      { label: 'Inquiries', href: '/admin-teftef/inquiries', icon: 'Inbox', permission: PERMISSIONS.INQUIRY_READ },
+      { label: 'Services', href: '/vira-admin/services', icon: 'Briefcase', permission: PERMISSIONS.SERVICE_READ },
+      { label: 'Portfolio', href: '/vira-admin/portfolio', icon: 'FolderKanban', permission: PERMISSIONS.PROJECT_READ },
+      { label: 'Blog', href: '/vira-admin/blog', icon: 'Newspaper', permission: PERMISSIONS.BLOG_READ },
+      { label: 'Inquiries', href: '/vira-admin/inquiries', icon: 'Inbox', permission: PERMISSIONS.INQUIRY_READ },
     ],
   },
   {
@@ -157,9 +232,9 @@ export const ADMIN_NAV = Object.freeze([
     icon: 'Users',
     permission: null,
     children: [
-      { label: 'Employees', href: '/admin-teftef/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
-      { label: 'Clients', href: '/admin-teftef/clients', icon: 'Building2', permission: PERMISSIONS.CLIENT_READ },
-      { label: 'Shareholders', href: '/admin-teftef/shareholders', icon: 'PieChart', permission: PERMISSIONS.SHAREHOLDER_READ },
+      { label: 'Employees', href: '/vira-admin/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
+      { label: 'Clients', href: '/vira-admin/clients', icon: 'Building2', permission: PERMISSIONS.CLIENT_READ },
+      { label: 'Shareholders', href: '/vira-admin/shareholders', icon: 'PieChart', permission: PERMISSIONS.SHAREHOLDER_READ },
     ],
   },
   {
@@ -167,9 +242,9 @@ export const ADMIN_NAV = Object.freeze([
     icon: 'Wallet',
     permission: PERMISSIONS.FINANCE_READ,
     children: [
-      { label: 'Transactions', href: '/admin-teftef/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Invoices', href: '/admin-teftef/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Reports', href: '/admin-teftef/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
+      { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
+      { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
+      { label: 'Reports', href: '/vira-admin/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
     ],
   },
   {
@@ -177,10 +252,10 @@ export const ADMIN_NAV = Object.freeze([
     icon: 'Settings',
     permission: PERMISSIONS.SETTINGS_READ,
     children: [
-      { label: 'Company', href: '/admin-teftef/settings/company', icon: 'Building', permission: PERMISSIONS.COMPANY_READ },
-      { label: 'Media', href: '/admin-teftef/settings/media', icon: 'Image', permission: PERMISSIONS.MEDIA_READ },
-      { label: 'Users & roles', href: '/admin-teftef/settings/users', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
-      { label: 'Activity log', href: '/admin-teftef/activity', icon: 'History', permission: PERMISSIONS.ACTIVITY_READ },
+      { label: 'Company', href: '/vira-admin/settings/company', icon: 'Building', permission: PERMISSIONS.COMPANY_READ },
+      { label: 'Media', href: '/vira-admin/settings/media', icon: 'Image', permission: PERMISSIONS.MEDIA_READ },
+      { label: 'Users & roles', href: '/vira-admin/settings/users', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
+      { label: 'Activity log', href: '/vira-admin/activity', icon: 'History', permission: PERMISSIONS.ACTIVITY_READ },
     ],
   },
 ]);

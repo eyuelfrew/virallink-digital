@@ -1,4 +1,3 @@
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 /**
@@ -22,14 +21,24 @@ import { NextResponse } from 'next/server';
  * admin layout, and gets nothing but a redirect to login.
  */
 
-const ADMIN_PATH = '/admin-teftef';
+const ADMIN_PATH = '/vira-admin';
 const ACCESS_COOKIE = 'vl_access';
 
 export async function proxy(request) {
   const { pathname, search } = request.nextUrl;
 
-  const headersList = await headers();
-  const hasSessionCookie = Boolean(headersList.get('cookie')?.includes(`${ACCESS_COOKIE}=`));
+  /*
+   * Read the cookie off the NextRequest rather than substring-matching the raw
+   * `Cookie` header.
+   *
+   * Two reasons. `request.cookies` is the supported accessor in the proxy
+   * runtime, and matching on the header text was both unreliable — the check ran
+   * but never saw the session cookie the browser had actually sent, so every
+   * signed-in admin was bounced straight back to the login form — and imprecise:
+   * a cookie named `xsrf_vl_access`, or any value containing "vl_access=", would
+   * satisfy `includes()` and pass the gate without a real session.
+   */
+  const hasSessionCookie = Boolean(request.cookies?.get(ACCESS_COOKIE)?.value);
 
   if (hasSessionCookie) return NextResponse.next();
 
@@ -48,11 +57,11 @@ export const config = {
   /*
    * Only the protected admin pages are intercepted.
    *
-   * `/admin-teftef/login` is deliberately excluded. Including it sent a signed-in
+   * `/vira-admin/login` is deliberately excluded. Including it sent a signed-in
    * user in a redirect loop — the login page renders, finds a session, and
    * redirects to the dashboard, which the proxy bounces straight back to login.
    * The page's own `getSession()` check already sends a signed-in user onward, so
    * the proxy does not need to see the login route at all.
    */
-  matcher: ['/admin-teftef/((?!login$).*)'],
+  matcher: ['/vira-admin/((?!login$).*)'],
 };

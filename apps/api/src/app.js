@@ -153,7 +153,27 @@ export function createApp() {
   /* Rate limiting                                                     */
   /* ---------------------------------------------------------------- */
 
-  app.use(globalLimiter);
+  /*
+   * Scope matters here more than the numbers.
+   *
+   * The global limiter protects the *anonymous* surface — the public reads and
+   * the contact form — which is the only part reachable without a session. It is
+   * deliberately NOT mounted across the whole API:
+   *
+   *   - Admin traffic already requires a valid session and a per-route
+   *     permission, so a per-IP budget adds nothing against an attacker and only
+   *     serves to lock out a legitimate administrator.
+   *   - One admin page view fans out into many API calls (the dashboard reads
+   *     the summary, activity, clients, employees and more). A global 300/15min
+   *     budget was being consumed by ~10 calls per page, so ordinary use of the
+   *     console produced "Too many requests" for a signed-in super admin.
+   *   - In this deployment every request reaches the API over loopback, so a
+   *     per-IP limit can only ever be a single shared bucket anyway.
+   *
+   * Login keeps its own much tighter limiter (authLimiter) inside auth.routes.js.
+   */
+  app.use('/api/v1/public', globalLimiter);
+  app.use('/api/v1/contact', globalLimiter);
 
   /* ---------------------------------------------------------------- */
   /* Routes                                                           */

@@ -892,7 +892,7 @@ async function main() {
 
   console.log(`\nAdded ${created.length} items:\n`);
   for (const item of created) console.log(`  + ${item}`);
-  console.log('\nOpen http://localhost:3000 to see the site, or /admin-teftef/login to manage it.\n');
+  console.log('\nOpen http://localhost:3000 to see the site, or /vira-admin/login to manage it.\n');
 }
 
 main().catch((error) => {

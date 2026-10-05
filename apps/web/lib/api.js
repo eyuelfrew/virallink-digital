@@ -75,13 +75,22 @@ async function request(path, { method = 'GET', body, cookie, headers: extraHeade
     });
 
     const text = await response.text();
-    let body = null;
+    /*
+     * Named `payload`, not `body`. The destructured `body` parameter above is
+     * shadowed for the whole function body by a same-named `let`, which sits in
+     * the temporal dead zone until this line executes. Referencing `body` while
+     * building the fetch options threw "Cannot access 'body' before
+     * initialization" on every single call, before the request was ever made —
+     * so every API read silently degraded to its fallback and no request reached
+     * the API at all.
+     */
+    let payload = null;
 
     if (text) {
       try {
-        body = JSON.parse(text);
+        payload = JSON.parse(text);
       } catch {
-        body = { raw: text };
+        payload = { raw: text };
       }
     }
 
@@ -91,15 +100,15 @@ async function request(path, { method = 'GET', body, cookie, headers: extraHeade
      * envelope here once made a validation failure surface downstream as a
      * non-iterable "array", crashing list rendering far from the cause.
      */
-    const data = response.ok ? body?.data ?? body : null;
+    const data = response.ok ? payload?.data ?? payload : null;
 
     return {
       ok: response.ok,
       status: response.status,
       data,
-      error: body?.error ?? null,
-      meta: body?.meta ?? null,
-      totals: body?.totals ?? null,
+      error: payload?.error ?? null,
+      meta: payload?.meta ?? null,
+      totals: payload?.totals ?? null,
     };
   } catch (error) {
     // A network failure to the API must not take the public site down.
