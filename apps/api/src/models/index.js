@@ -163,6 +163,13 @@ Role.belongsToMany(User, { ...userRolesThrough, as: 'users', foreignKey: 'roleId
 RefreshToken.belongsTo(User, { as: 'user', foreignKey: 'userId', onDelete: 'CASCADE' });
 User.hasMany(RefreshToken, { as: 'refreshTokens', foreignKey: 'userId' });
 
+/*
+ * A user may be linked to the employee record they work as. This is what lets
+ * "My tasks" resolve session -> employee -> tasks.assignee_id. Optional: an
+ * administrator has a user with no employee behind it.
+ */
+User.belongsTo(Employee, { as: 'employee', foreignKey: 'employeeId' });
+
 /* -------------------------------------------------------------------------- */
 /* Company & branding                                                         */
 /* -------------------------------------------------------------------------- */

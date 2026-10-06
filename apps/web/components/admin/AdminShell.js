@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ADMIN_NAV } from '@virallink/shared/permissions';
+import { ADMIN_NAV } from '@/shared/permissions';
 import { ADMIN_PATH } from '@/lib/config';
 import {
   LayoutDashboard, FileStack, Users, Wallet, Settings, Menu, X, LogOut, ChevronDown,

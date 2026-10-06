@@ -6,6 +6,13 @@ import { cn } from '@/lib/utils';
 import { slugify } from '@virallink/shared/seo';
 
 /**
+ * Matches the `.max(20)` on the faq array in the shared service schema. Read from
+ * one place deliberately: if the two ever disagree the form either hides a
+ * question the API would accept, or offers a row that is silently rejected.
+ */
+const MAX_FAQS = 20;
+
+/**
  * Service create/edit dialog.
  *
  * Includes a live slug preview. The slug is the URL, so it is worth showing what
@@ -28,6 +35,20 @@ export function ServiceFormDialog({ service = null, triggerLabel = 'Add service'
   const [slug, setSlug] = useState(service?.slug || '');
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
+  /*
+   * Seeded from whatever is already saved, so opening a five-question service
+   * shows five rows and saving it back changes nothing. Never fewer than one row,
+   * so there is always somewhere to type.
+   */
+  const [faqRows, setFaqRows] = useState(() => {
+    const existing = Array.isArray(service?.faq) ? service.faq : [];
+    return existing.length ? existing.map((row) => ({ question: row.question, answer: row.answer })) : [{ question: '', answer: '' }];
+  });
+
+  function removeFaq(index) {
+    setFaqRows((rows) => rows.filter((_, position) => position !== index));
+  }
+
   useEffect(() => {
     if (!open) {
       setError(null);
@@ -46,10 +67,19 @@ export function ServiceFormDialog({ service = null, triggerLabel = 'Add service'
 
     const formData = new FormData(event.currentTarget);
 
+    /*
+     * Regroup the indexed fields into the array the API expects, dropping any row
+     * left half-filled. Rows are removed rather than skipped by position, so
+     * deleting question 2 of 3 does not shift the others.
+     */
     const faq = [];
-    const faqQuestion = formData.get('faqQuestion')?.toString().trim();
-    const faqAnswer = formData.get('faqAnswer')?.toString().trim();
-    if (faqQuestion && faqAnswer) faq.push({ question: faqQuestion, answer: faqAnswer });
+
+    for (let index = 0; index < faqRows.length; index += 1) {
+      const question = formData.get(`faqQuestion__${index}`)?.toString().trim();
+      const answer = formData.get(`faqAnswer__${index}`)?.toString().trim();
+
+      if (question && answer) faq.push({ question, answer });
+    }
 
     const payload = {
       title: formData.get('title'),
@@ -277,41 +307,73 @@ export function ServiceFormDialog({ service = null, triggerLabel = 'Add service'
                   </div>
                 </fieldset>
 
-                {/* One FAQ slot. Enough for most services, and a second could be
-                    added without changing the shape. */}
+                {/*
+                  A repeatable list, not a single pair.
+
+                  This rendered exactly one question and pre-filled it from
+                  `service?.faq?.[0]`, then submitted that as a one-element array.
+                  The API accepts up to 20, so editing a service that had five
+                  questions silently deleted four of them — data loss caused by
+                  saving a change to an unrelated field.
+
+                  Rows are named with an index suffix so FormData can be regrouped
+                  on submit, and the count starts from what is already saved so an
+                  edit round-trips unchanged.
+                */}
                 <fieldset className="rounded-md border border-line p-4">
                   <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-ink-subtle">
-                    Question (optional)
+                    Questions (optional)
                   </legend>
 
                   <p className="mb-4 text-xs text-ink-subtle">
-                    A published question appears on this page and in the structured data.
+                    Published questions appear on this page and in the structured data.
                   </p>
 
-                  <div className="flex flex-col gap-2">
-                    <label htmlFor="faqQuestion" className="text-sm font-medium text-ink-soft">
-                      Question
-                    </label>
-                    <input
-                      id="faqQuestion"
-                      name="faqQuestion"
-                      defaultValue={service?.faq?.[0]?.question || ''}
-                      className={inputClasses()}
-                    />
+                  <div className="flex flex-col gap-4">
+                    {faqRows.map((row, index) => (
+                      <div key={index} className="rounded-md border border-line p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-ink-subtle">Question {index + 1}</span>
+
+                          {faqRows.length > 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => removeFaq(index)}
+                              className="text-xs font-medium text-danger hover:underline"
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <input
+                            name={`faqQuestion__${index}`}
+                            defaultValue={row.question}
+                            placeholder="What does this service include?"
+                            className={inputClasses()}
+                          />
+                          <textarea
+                            name={`faqAnswer__${index}`}
+                            rows={2}
+                            defaultValue={row.answer}
+                            placeholder="The answer, in plain language."
+                            className={inputClasses(false, 'resize-y')}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="mt-4 flex flex-col gap-2">
-                    <label htmlFor="faqAnswer" className="text-sm font-medium text-ink-soft">
-                      Answer
-                    </label>
-                    <textarea
-                      id="faqAnswer"
-                      name="faqAnswer"
-                      rows={3}
-                      defaultValue={service?.faq?.[0]?.answer || ''}
-                      className={inputClasses(false, 'resize-y')}
-                    />
-                  </div>
+                  {faqRows.length < MAX_FAQS ? (
+                    <button
+                      type="button"
+                      onClick={() => setFaqRows([...faqRows, { question: '', answer: '' }])}
+                      className="mt-3 text-xs font-semibold text-brand-600 hover:underline"
+                    >
+                      + Add another question
+                    </button>
+                  ) : null}
                 </fieldset>
 
                 <label className="flex items-start gap-3 rounded-md border border-line bg-surface-muted p-4">

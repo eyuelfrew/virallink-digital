@@ -16,7 +16,7 @@ import sequelize from '../src/config/database.js';
 import env from '../src/config/env.js';
 import bcrypt from 'bcrypt';
 import models from '../src/models/index.js';
-import { ALL_PERMISSIONS } from '@virallink/shared/permissions';
+import { ALL_PERMISSIONS } from '../src/shared/permissions.js';
 
 const { User, Role, Employee, Client, Shareholder, FinancialTransaction, Project, Service, Department } = models;
 

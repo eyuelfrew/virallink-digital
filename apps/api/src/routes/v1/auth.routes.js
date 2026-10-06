@@ -19,7 +19,7 @@ import {
 import { requireAuth, verifyAccessToken } from '../../services/token.service.js';
 import bcrypt from 'bcrypt';
 import env from '../../config/env.js';
-import { ROLES } from '@virallink/shared/enums';
+import { ROLES } from '../../shared/enums.js';
 
 const authenticate = requireAuth(models);
 

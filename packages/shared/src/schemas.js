@@ -159,6 +159,12 @@ export const createUserSchema = z.object({
   password: passwordSchema,
   role: z.enum(valuesOf(ROLES)),
   isActive: z.boolean().default(true),
+  /**
+   * Optional link to the employee record this account signs in as. Nullable:
+   * administrators typically have no employee profile, and "My tasks" simply
+   * reports the account as unlinked until one is chosen.
+   */
+  employeeId: idSchema.nullable().optional(),
 });
 
 export const updateUserSchema = z
@@ -168,6 +174,7 @@ export const updateUserSchema = z
     password: passwordSchema.optional(),
     role: z.enum(valuesOf(ROLES)).optional(),
     isActive: z.boolean().optional(),
+    employeeId: idSchema.nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one field to update');
 

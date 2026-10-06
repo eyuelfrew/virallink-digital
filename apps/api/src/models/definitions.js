@@ -34,7 +34,7 @@ import {
   CONTENT_STAGE,
   PROPOSAL_STATUS,
   valuesOf,
-} from '@virallink/shared/enums';
+} from '../shared/enums.js';
 
 /** Column factories, so each entry below stays readable. */
 const pk = () => ({ type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true });
@@ -115,9 +115,21 @@ export const definitions = {
       failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lockedUntil: optionalDate(),
       passwordChangedAt: optionalDate(),
+      /**
+       * The employee record this account signs in as — the bridge between
+       * "who may sign in" and "who tasks are assigned to". Nullable:
+       * administrators need no employee record. Deleted employees unlink
+       * themselves (FK ON DELETE SET NULL) rather than taking the account with them.
+       */
+      employeeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /**
+       * Role for granular permissions. Null for SUPER_ADMIN/ADMIN who have all permissions.
+       * When set, this role determines the user's capabilities alongside the role's permissions.
+       */
+      role: { type: DataTypes.STRING(60), allowNull: true, defaultValue: null },
     },
     options: {
-      indexes: [{ fields: ['email'] }, { fields: ['isActive'] }],
+      indexes: [{ fields: ['email'] }, { fields: ['isActive'] }, { fields: ['employeeId'] }],
     },
     paranoid: true,
   },
@@ -572,8 +584,10 @@ export const definitions = {
       description: longText(),
       status: { type: DataTypes.ENUM(...valuesOf(TASK_STATUS)), allowNull: false, defaultValue: TASK_STATUS.TODO },
       priority: { type: DataTypes.ENUM(...valuesOf(TASK_PRIORITY)), allowNull: false, defaultValue: TASK_PRIORITY.MEDIUM },
-      /** The staff member responsible. Not a foreign key, so the row survives deletion. */
+      /** The staff member responsible (legacy Employee). Not a foreign key, so the row survives deletion. */
       assigneeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** The user responsible (modern User-based assignment). Takes precedence over assigneeId when set. */
+      assigneeUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
       clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
       projectId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
       dueDate: optionalDate(DataTypes.DATEONLY),

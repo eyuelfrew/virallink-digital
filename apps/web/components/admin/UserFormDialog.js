@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
  * omitted password as "leave the existing one alone" while "" would fail the
  * password policy and block the whole update — including a role change.
  */
-export function UserFormDialog({ user = null, roles = [], triggerLabel = 'Add user' }) {
+export function UserFormDialog({ user = null, roles = [], employees = [], triggerLabel = 'Add user' }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -35,6 +35,10 @@ export function UserFormDialog({ user = null, roles = [], triggerLabel = 'Add us
       email: form.get('email'),
       role: form.get('role'),
       isActive: form.get('isActive') === 'on',
+      // '' means "not linked" and is sent as null — the API treats null as
+      // unlink and an absent field as "leave alone", so an edit that changes
+      // nothing about the link still round-trips cleanly.
+      employeeId: form.get('employeeId') ? Number(form.get('employeeId')) : null,
       ...(password ? { password } : {}),
     };
 
@@ -147,6 +151,31 @@ export function UserFormDialog({ user = null, roles = [], triggerLabel = 'Add us
                     ))}
                   </select>
                   {fieldErrors.role ? <p className="text-xs text-danger">{fieldErrors.role[0]}</p> : null}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="user-employee" className="text-sm font-medium text-ink-soft">
+                    Employee profile
+                  </label>
+                  <select
+                    id="user-employee"
+                    name="employeeId"
+                    defaultValue={user?.employeeId || ''}
+                    className="h-10 rounded-md border border-line bg-surface px-3 text-sm"
+                  >
+                    <option value="">Not linked</option>
+                    {employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-ink-subtle">
+                    Linking lets this person see the tasks assigned to that profile under My tasks.
+                  </p>
+                  {fieldErrors.employeeId ? (
+                    <p className="text-xs text-danger">{fieldErrors.employeeId[0]}</p>
+                  ) : null}
                 </div>
 
                 <div className="flex flex-col gap-1.5">

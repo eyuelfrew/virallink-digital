@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ADMIN_RESOURCE_PREFIXES } from '@virallink/shared/permissions';
+import { ADMIN_RESOURCE_PREFIXES } from '@/shared/permissions';
 import { proxyAuth } from '@/lib/authProxy';
 
 /**

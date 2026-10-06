@@ -44,7 +44,7 @@ import {
   updateMediaSchema,
   reorderSchema,
   publicContactSchema,
-} from '@virallink/shared/schemas';
+} from '../shared/schemas.js';
 
 /**
  * Route validation schemas.

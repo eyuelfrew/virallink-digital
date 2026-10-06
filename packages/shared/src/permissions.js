@@ -159,7 +159,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.MEDIA_WRITE,
   ],
 
-  [ROLES.FINANCE]: [
+[ROLES.FINANCE]: [
     PERMISSIONS.FINANCE_READ,
     PERMISSIONS.FINANCE_WRITE,
     PERMISSIONS.FINANCE_DELETE,
@@ -171,13 +171,126 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.ACTIVITY_READ,
   ],
-});
+
+  [ROLES.SOFTWARE_ENGINEER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+  ],
+
+  [ROLES.VIDEO_EDITOR]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.PROJECT_MANAGER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+    PERMISSIONS.CLIENT_READ,
+    PERMISSIONS.CLIENT_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+  ],
+
+  [ROLES.CONTENT_WRITER]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+  ],
+
+  [ROLES.SOCIAL_MEDIA_MANAGER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.SOCIAL_READ,
+    PERMISSIONS.SOCIAL_WRITE,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.GRAPHIC_DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.MOTION_DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.COPYWRITER]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+  ],
+
+  [ROLES.SEO_SPECIALIST]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+    PERMISSIONS.SEO_READ,
+    PERMISSIONS.SEO_WRITE,
+  ],
+
+  [ROLES.MARKETING_COORDINATOR]: [
+    PERMISSIONS.CLIENT_READ,
+    PERMISSIONS.CLIENT_WRITE,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+  ],
 
 export const ROLE_LABELS = Object.freeze({
   [ROLES.SUPER_ADMIN]: 'Super admin',
   [ROLES.ADMIN]: 'Administrator',
   [ROLES.EDITOR]: 'Content editor',
   [ROLES.FINANCE]: 'Finance',
+  [ROLES.SOFTWARE_ENGINEER]: 'Software Engineer',
+  [ROLES.VIDEO_EDITOR]: 'Video Editor',
+  [ROLES.DESIGNER]: 'Designer',
+  [ROLES.PROJECT_MANAGER]: 'Project Manager',
+  [ROLES.CONTENT_WRITER]: 'Content Writer',
+  [ROLES.SOCIAL_MEDIA_MANAGER]: 'Social Media Manager',
+  [ROLES.GRAPHIC_DESIGNER]: 'Graphic Designer',
+  [ROLES.MOTION_DESIGNER]: 'Motion Designer',
+  [ROLES.COPYWRITER]: 'Copywriter',
+  [ROLES.SEO_SPECIALIST]: 'SEO Specialist',
+  [ROLES.MARKETING_COORDINATOR]: 'Marketing Coordinator',
 });
 
 /**
@@ -189,6 +302,14 @@ export const ADMIN_NAV = Object.freeze([
   // page.js at /vira-admin, so linking there would 404, and `exact` would then
   // never match, leaving the Dashboard item unhighlighted on every page.
   { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: null, exact: true },
+  /*
+   * Personal work, deliberately the first thing after the dashboard rather than
+   * buried in a group: an employee signs in to see what is assigned to them,
+   * and that should be one click from anywhere. `permission: null` because it
+   * shows the caller their *own* tasks — the API resolves the assignee from the
+   * session, so there is nothing here that a permission gate would protect.
+   */
+  { label: 'My tasks', href: '/vira-admin/my-tasks', icon: 'ListChecks', permission: null, exact: true },
   // Internal workload, not content. Kept as its own top-level item rather than
   // inside Content so it is never mistaken for something publishable.
   {
@@ -237,7 +358,7 @@ export const ADMIN_NAV = Object.freeze([
       { label: 'Shareholders', href: '/vira-admin/shareholders', icon: 'PieChart', permission: PERMISSIONS.SHAREHOLDER_READ },
     ],
   },
-  {
+{
     label: 'Finance',
     icon: 'Wallet',
     permission: PERMISSIONS.FINANCE_READ,
@@ -245,6 +366,15 @@ export const ADMIN_NAV = Object.freeze([
       { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Reports', href: '/vira-admin/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
+    ],
+  },
+  {
+    label: 'Team',
+    icon: 'Users',
+    permission: PERMISSIONS.EMPLOYEE_READ,
+    children: [
+      { label: 'Employees', href: '/vira-admin/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
+      { label: 'Roles & permissions', href: '/vira-admin/settings/roles', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
     ],
   },
   {

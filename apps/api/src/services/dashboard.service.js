@@ -11,7 +11,7 @@ import {
   INVOICE_STATUS,
   EMPLOYMENT_STATUS,
   SHAREHOLDER_STATUS,
-} from '@virallink/shared/enums';
+} from '../shared/enums.js';
 import { sumCents, outstandingCents } from '../utils/money.js';
 
 /**

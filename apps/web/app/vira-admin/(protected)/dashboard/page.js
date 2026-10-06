@@ -4,7 +4,8 @@ import { AdminHeader, StatCard, AdminPanel, TableSkeleton } from '@/components/a
 import { StatusBadge, DateCell, MoneyCell, NumberCell } from '@/components/admin/Badge';
 import { EmptyState } from '@/components/site/Card';
 import { FinanceTrendChart } from '@/components/admin/charts';
-import { formatMoney, formatMoneyCompact } from '@virallink/shared/format';
+import { formatMoney, formatMoneyCompact } from '@/shared/format';
+import { TASK_STATUS } from '@/shared/enums';
 import {
   Building2, FolderKanban, Users, PieChart, Inbox,
   TrendingUp, TrendingDown, Wallet, Clock, Activity, AlertTriangle,
@@ -24,7 +25,12 @@ export const metadata = { title: 'Dashboard' };
 export default async function DashboardPage() {
   await requirePermission('client.read');
 
-  const summary = await adminData('/dashboard/summary');
+  const [summary, myTasks] = await Promise.all([
+    adminData('/dashboard/summary'),
+    // Feeds the "Your tasks" panel below. Kept independent: if it fails the
+    // dashboard still renders, it just loses the panel.
+    adminData('/tasks/mine'),
+  ]);
   const data = summary.data;
 
   // The API being unreachable should say so plainly rather than showing zeros,
@@ -57,6 +63,16 @@ export default async function DashboardPage() {
     counts.employees > 0 ||
     finance.lifetime.incomeCents > 0 ||
     counts.inquiries.unread > 0;
+
+  // The signed-in person's open work for the "Your tasks" panel — capped at
+  // what a dashboard row list can show; the board has the rest.
+  const openTasks = (myTasks.data?.tasks || [])
+    .filter((task) =>
+      [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW, TASK_STATUS.BLOCKED].includes(
+        task.status,
+      ),
+    )
+    .slice(0, 5);
 
   return (
     <>
@@ -266,6 +282,50 @@ export default async function DashboardPage() {
           )}
         </AdminPanel>
       </div>
+
+      {/*
+        The signed-in person's own open work, surfaced where they land after
+        sign-in so "what do I do today" needs no navigation. Rendered only when
+        the account is linked to an employee and has something open — an
+        administrator without a link sees no panel rather than an empty one.
+      */}
+      {myTasks.ok && myTasks.data?.linked && openTasks.length ? (
+        <div className="mt-4">
+          <AdminPanel
+            title="Your tasks"
+            action={
+              <a
+                href="/vira-admin/my-tasks"
+                className="text-sm font-semibold text-brand-600 hover:underline"
+              >
+                Open board
+              </a>
+            }
+          >
+            <ul className="flex flex-col divide-y divide-line">
+              {openTasks.map((task) => (
+                <li key={task.id} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">{task.title}</p>
+                    {task.clientName || task.projectTitle ? (
+                      <p className="mt-0.5 truncate text-xs text-ink-subtle">
+                        {[task.clientName, task.projectTitle].filter(Boolean).join(' · ')}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-3">
+                    {task.dueDate ? (
+                      <DateCell value={task.dueDate} />
+                    ) : null}
+                    <StatusBadge status={task.status} kind="generic" />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </AdminPanel>
+        </div>
+      ) : null}
 
       {/* Composition, only when there is something to compose. */}
       {statusBreakdown?.projects?.length ? (

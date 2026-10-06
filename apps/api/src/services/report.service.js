@@ -1,7 +1,7 @@
 import { Op, fn, col } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
-import { DELIVERABLE_TYPE, METRIC_PLATFORM } from '@virallink/shared/enums';
+import { DELIVERABLE_TYPE, METRIC_PLATFORM } from '../shared/enums.js';
 
 const { Client, ContentDeliverable, ContentMetric, ContentStageEvent } = models;
 

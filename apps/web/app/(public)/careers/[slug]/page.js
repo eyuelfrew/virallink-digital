@@ -7,7 +7,7 @@ import { Breadcrumbs } from '@/components/site/Breadcrumbs';
 import { ButtonLink } from '@/components/ui/Button';
 import { ContactCta } from '@/components/site/home-sections';
 import { sanitizeArticleHtml } from '@/lib/sanitize';
-import { formatDate } from '@virallink/shared/format';
+import { formatDate } from '@/shared/format';
 
 /**
  * Job detail.

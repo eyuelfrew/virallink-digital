@@ -7,7 +7,7 @@ import { getStorageDriver, buildMediaKey, isValidMediaKey } from '../config/stor
 import { toPublicMedia } from '../serializers/public.js';
 import { logCrud } from '../middleware/audit.js';
 import { invalidatePublicContent } from './public.service.js';
-import { ACTIVITY_ACTION, ENTITY, MEDIA_KIND } from '@virallink/shared/enums';
+import { ACTIVITY_ACTION, ENTITY, MEDIA_KIND } from '../shared/enums.js';
 import { randomToken } from '../utils/cache.js';
 
 /**

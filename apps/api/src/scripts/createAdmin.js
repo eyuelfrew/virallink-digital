@@ -13,8 +13,8 @@ import bcrypt from 'bcrypt';
 import env from '../config/env.js';
 import sequelize from '../config/database.js';
 import { models } from '../models/index.js';
-import { ROLES } from '@virallink/shared/enums';
-import { passwordSchema, WEAK_PASSWORDS } from '@virallink/shared/schemas';
+import { ROLES } from '../shared/enums.js';
+import { passwordSchema, WEAK_PASSWORDS } from '../shared/schemas.js';
 import { recordActivity } from '../middleware/audit.js';
 
 const { User, Role, Permission } = models;

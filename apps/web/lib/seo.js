@@ -38,7 +38,12 @@ export function buildMetadata({
   const ogImage = image
     ? { url: absoluteUrl(image, SITE_URL), width: 1200, height: 630, alt: title || BRAND.name }
     : {
-        url: absoluteUrl('/og-default.png', SITE_URL),
+        // Points at the generated route, not a file. This used to reference
+        // /og-default.png, which was never committed — so every page without its
+        // own image advertised a 404 as its social card, and Facebook, LinkedIn and
+        // X showed nothing at all. The route renders a PNG on demand from the brand
+        // tokens, so it cannot go stale after a rebrand either.
+        url: absoluteUrl('/og-image', SITE_URL),
         width: 1200,
         height: 630,
         alt: `${BRAND.name} — digital marketing agency`,

@@ -7,7 +7,7 @@ import { Section } from '@/components/site/Section';
 import { Breadcrumbs } from '@/components/site/Breadcrumbs';
 import { PostCard } from '@/components/site/Card';
 import { ContactCta } from '@/components/site/home-sections';
-import { formatDate } from '@virallink/shared/format';
+import { formatDate } from '@/shared/format';
 import { sanitizeArticleHtml } from '@/lib/sanitize';
 
 /**

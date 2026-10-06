@@ -22,13 +22,21 @@ export const metadata = { title: 'Users & roles' };
 export default async function UsersSettingsPage() {
   const session = await requirePermission('user.read');
 
-  const [usersResult, rolesResult] = await Promise.all([
+  const [usersResult, rolesResult, employeesResult] = await Promise.all([
     adminData('/users?pageSize=100'),
     adminData('/roles').catch(() => ({ data: [] })),
+    // For the employee-link picker in the user form. A failed lookup yields an
+    // empty list rather than breaking the page — the form then offers only
+    // "Not linked", which is recoverable.
+    adminData('/employees?pageSize=100').catch(() => ({ data: [] })),
   ]);
 
   const users = usersResult.data || [];
   const roles = rolesResult.data || [];
+  const employees = (employeesResult.data || []).map((employee) => ({
+    id: employee.id,
+    name: employee.name,
+  }));
 
   const roleName = (key) => roles.find((role) => role.key === key)?.name || key;
 
@@ -37,7 +45,7 @@ export default async function UsersSettingsPage() {
       <AdminHeader
         title="Users & roles"
         description="Who can sign in to this console, and what each role is permitted to do."
-        action={<UserFormDialog roles={roles} triggerLabel="Add user" />}
+        action={<UserFormDialog roles={roles} employees={employees} triggerLabel="Add user" />}
       />
 
       <div className="flex flex-col gap-4">
@@ -47,6 +55,7 @@ export default async function UsersSettingsPage() {
               <tr>
                 <Th>User</Th>
                 <Th>Role</Th>
+                <Th>Employee</Th>
                 <Th>Status</Th>
                 <Th>Last sign-in</Th>
                 <Th align="right">Actions</Th>
@@ -71,6 +80,13 @@ export default async function UsersSettingsPage() {
                     </Td>
 
                     <Td>
+                      {/* The link that makes "My tasks" work for this person. */}
+                      <span className="text-sm text-ink-soft">
+                        {user.employeeName || <span className="text-ink-subtle">Not linked</span>}
+                      </span>
+                    </Td>
+
+                    <Td>
                       {/* A locked-out account is reported as such rather than as
                           merely inactive, because the fix is different. */}
                       {user.lockedUntil && new Date(user.lockedUntil) > new Date() ? (
@@ -86,7 +102,7 @@ export default async function UsersSettingsPage() {
 
                     <Td align="right">
                       <div className="flex items-center justify-end gap-2">
-                        <UserFormDialog user={user} roles={roles} triggerLabel="Edit" />
+                        <UserFormDialog user={user} roles={roles} employees={employees} triggerLabel="Edit" />
 
                         {/* The API refuses to delete your own account and refuses to
                             remove the last super administrator. Hiding the button

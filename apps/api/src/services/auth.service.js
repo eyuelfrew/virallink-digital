@@ -37,6 +37,9 @@ export function toPublicUser(user) {
     email: user.email,
     isActive: user.isActive,
     lastLoginAt: user.lastLoginAt,
+    // Linked employee record, if any — lets the UI tell a signed-in person
+    // whether "My tasks" can work before they click into it.
+    employeeId: user.employeeId ?? null,
     roles: user.roles?.map((role) => role.key) || [],
     permissions: [
       ...new Set((user.roles || []).flatMap((role) => role.permissions?.map((p) => p.key) || [])),

@@ -4,7 +4,7 @@ import { AdminHeader, AdminPanel, StatCard, TableWrapper, Th, Td } from '@/compo
 import { DateCell, MoneyCell } from '@/components/admin/Badge';
 import { DeleteButton } from '@/components/admin/DeleteButton';
 import { ProposalFormDialog } from '@/components/admin/ProposalFormDialog';
-import { PROPOSAL_STATUS_LABELS } from '@virallink/shared/enums';
+import { PROPOSAL_STATUS_LABELS } from '@/shared/enums';
 
 export const metadata = { title: 'Proposals' };
 

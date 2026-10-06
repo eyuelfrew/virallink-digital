@@ -1,0 +1,25 @@
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self';base-uri 'self';font-src 'self' https://fonts.gstatic.com data:;form-action 'self';frame-ancestors 'none';img-src 'self' data: blob: http://localhost:3000 https:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;connect-src 'self' http://localhost:3000
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-site
+Origin-Agent-Cluster: ?1
+Referrer-Policy: strict-origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Download-Options: noopen
+X-Frame-Options: SAMEORIGIN
+X-Permitted-Cross-Domain-Policies: none
+X-XSS-Protection: 0
+Vary: Origin, Accept-Encoding
+Access-Control-Allow-Credentials: true
+Access-Control-Expose-Headers: X-Request-Id,Retry-After
+X-Request-Id: 48ab82fd-c1fd-4fa1-96cf-a4a69dfcb1c8
+Content-Type: application/octet-stream
+Content-Length: 11269
+Cache-Control: public, max-age=31536000, immutable
+X-Content-Options: nosniff
+ETag: "2c05-KTZOzrxSdsMi3WmFQ3BiifMwAxM"
+Date: Tue, 06 Oct 2026 07:51:24 GMT
+Connection: keep-alive
+Keep-Alive: timeout=61
+

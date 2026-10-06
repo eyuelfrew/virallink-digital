@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(self), microphone=(), geolocation=(), interest-cohort=()
+Strict-Transport-Security: max-age=63072000; includeSubDomains
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+cache-control: public, max-age=86400, s-maxage=604800
+content-type: image/png
+Date: Tue, 06 Oct 2026 07:49:31 GMT
+Connection: keep-alive
+Keep-Alive: timeout=61
+Transfer-Encoding: chunked
+

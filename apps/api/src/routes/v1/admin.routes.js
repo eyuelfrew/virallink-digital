@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { models } from '../../models/index.js';
 import { idFrom, query, v } from '../../middleware/schemas.js';
-import { ADMIN_RESOURCE_PREFIXES } from '@virallink/shared/permissions';
+import { ADMIN_RESOURCE_PREFIXES } from '../../shared/permissions.js';
 import { AppError } from '../../utils/AppError.js';
 import { requireAuth } from '../../services/token.service.js';
 import { requirePermission } from '../../middleware/rbac.js';
@@ -642,6 +642,22 @@ router.get('/tasks', requirePermission('task.read'), v('listTasks'), async (requ
 
 router.get('/tasks/summary', requirePermission('task.read'), async (_request, response) => {
   response.json({ data: await taskService.taskSummary() });
+});
+
+/*
+ * The signed-in person's own tasks — the "My tasks" view.
+ *
+ * Deliberately gated on authentication alone rather than requirePermission:
+ * it returns only data about the caller (resolved from the employee link on
+ * their session), so it is the task equivalent of /auth/me. Every seeded role
+ * holds task.read anyway, and a future read-only role should still be able to
+ * see its own work.
+ *
+ * Declared BEFORE GET /tasks/:id on purpose — otherwise "mine" is captured as
+ * an :id and rejected by the idParam validator with a 422.
+ */
+router.get('/tasks/mine', async (request, response) => {
+  response.json({ data: await taskService.myTasks(request.user) });
 });
 
 router.get('/tasks/:id', requirePermission('task.read'), v('idParam'), async (request, response) => {

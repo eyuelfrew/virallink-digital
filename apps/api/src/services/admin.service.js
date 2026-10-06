@@ -7,7 +7,7 @@ import { buildMeta, toLimitOffset, generateUniqueSlug, normaliseSearch } from '.
 import { logCrud, buildDiff, publishAction } from '../middleware/audit.js';
 import { invalidatePublicContent } from './public.service.js';
 import { toCents, fromCents, calculateInvoiceTotals, deriveInvoiceStatus, sumCents, outstandingCents } from '../utils/money.js';
-import { ACTIVITY_ACTION, ENTITY, TRANSACTION_TYPE, INVOICE_STATUS } from '@virallink/shared/enums';
+import { ACTIVITY_ACTION, ENTITY, TRANSACTION_TYPE, INVOICE_STATUS } from '../shared/enums.js';
 
 /**
  * Admin CRUD services.

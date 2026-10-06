@@ -1,6 +1,6 @@
 import { models } from '../models/index.js';
 import logger from '../config/logger.js';
-import { ACTIVITY_ACTION, ENTITY } from '@virallink/shared/enums';
+import { ACTIVITY_ACTION, ENTITY } from '../shared/enums.js';
 import { sanitiseForAudit } from './validate.js';
 
 /**

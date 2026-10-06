@@ -9,7 +9,7 @@ import { PostCard } from '@/components/site/Card';
 import { ArrowLink } from '@/components/ui/Button';
 import { ContactCta } from '@/components/site/home-sections';
 import { stripHtml } from '@/lib/seo';
-import { formatDate } from '@virallink/shared/format';
+import { formatDate } from '@/shared/format';
 
 /**
  * Case study detail.

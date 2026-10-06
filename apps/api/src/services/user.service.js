@@ -4,7 +4,7 @@ import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
 import env from '../config/env.js';
 
-const { User, Role, Permission } = models;
+const { User, Role, Permission, Employee } = models;
 
 /**
  * User and role administration.
@@ -34,8 +34,25 @@ export function toAdminUser(user) {
     createdAt: user.createdAt,
     lockedUntil: user.lockedUntil,
     roles: (user.roles || []).map((role) => role.key),
+    // The employee this sign-in is linked to. The name is display-only, resolved
+    // for the users table so it need not be fetched again per row.
+    employeeId: user.employeeId ?? null,
+    employeeName: user.employee?.name ?? null,
   };
 }
+
+/**
+ * Resolve an employee link id, rejecting a value that names no employee.
+ * `null` means "unlink" and is always valid; `undefined` means "leave alone".
+ */
+async function assertEmployeeLink(employeeId) {
+  if (employeeId === null || employeeId === undefined) return;
+  const employee = await Employee.findByPk(employeeId, { attributes: ['id'] });
+  if (!employee) throw AppError.badRequest('That employee profile does not exist');
+}
+
+/** Include config so list/create/update responses can show the linked name. */
+const EMPLOYEE_INCLUDE = [{ model: Employee, as: 'employee', attributes: ['id', 'name'], required: false }];
 
 /** Count active super administrators. */
 async function activeSuperAdminCount(excludingUserId = null) {
@@ -69,7 +86,7 @@ export async function listUsers({ page = 1, pageSize = 20, search } = {}) {
 
   const { rows, count } = await User.findAndCountAll({
     where,
-    include: [{ model: Role, as: 'roles' }],
+    include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
     order: [['name', 'ASC']],
     limit: pageSize,
     offset: (page - 1) * pageSize,
@@ -109,16 +126,21 @@ export async function createUser(payload, request) {
   const existing = await User.findOne({ where: { email: payload.email } });
   if (existing) throw AppError.conflict('An account with that email already exists');
 
+  await assertEmployeeLink(payload.employeeId);
+
   const user = await User.create({
     name: payload.name,
     email: payload.email,
     passwordHash: await bcrypt.hash(payload.password, env.BCRYPT_ROUNDS),
     isActive: payload.isActive,
+    employeeId: payload.employeeId ?? null,
   });
 
   await user.setRoles([await roleByKey(payload.role)]);
 
-  const fresh = await User.findByPk(user.id, { include: [{ model: Role, as: 'roles' }] });
+  const fresh = await User.findByPk(user.id, {
+    include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
+  });
   void request;
   return toAdminUser(fresh);
 }
@@ -152,6 +174,12 @@ export async function updateUser(id, payload, request) {
     user.passwordChangedAt = new Date();
   }
   if (payload.isActive !== undefined) user.isActive = payload.isActive;
+  if (payload.employeeId !== undefined) {
+    // `null` unlinks, a number links, `undefined` (absent) leaves it alone —
+    // assertEmployeeLink accepts all three, validating only the link case.
+    await assertEmployeeLink(payload.employeeId);
+    user.employeeId = payload.employeeId;
+  }
 
   await user.save();
 
@@ -159,7 +187,9 @@ export async function updateUser(id, payload, request) {
     await user.setRoles([await roleByKey(payload.role)]);
   }
 
-  const fresh = await User.findByPk(id, { include: [{ model: Role, as: 'roles' }] });
+  const fresh = await User.findByPk(id, {
+    include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
+  });
   return toAdminUser(fresh);
 }
 

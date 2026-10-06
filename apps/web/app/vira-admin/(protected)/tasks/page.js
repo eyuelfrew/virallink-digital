@@ -1,7 +1,7 @@
 import { createAdminListPage } from '../createListPage';
 import { TaskFormDialog } from '@/components/admin/TaskFormDialog';
 import { adminData } from '../lib/adminData';
-import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS } from '@virallink/shared/enums';
+import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS } from '@/shared/enums';
 
 export const metadata = { title: 'Tasks' };
 
@@ -25,9 +25,14 @@ function isOverdue(task) {
 async function loadEmployees() {
   try {
     const result = await adminData('/employees?pageSize=100');
-    return (result.data || []).map((employee) => ({ id: employee.id, name: employee.name }));
+    return {
+      employees: (result.data || []).map((employee) => ({
+        id: employee.id,
+        name: employee.name,
+      })),
+    };
   } catch {
-    return [];
+    return { employees: [] };
   }
 }
 
@@ -42,6 +47,27 @@ async function loadEmployees() {
  */
 const optionsFrom = (labels) =>
   Object.entries(labels).map(([value, label]) => ({ value, label }));
+
+/*
+ * Defined OUTSIDE the config object on purpose.
+ *
+ * These were inline arrow functions inside the config, which meant every render
+ * of the factory created a brand-new component reference. React treats a changed
+ * component type as a different element: it unmounts the old subtree and mounts a
+ * new one, which resets `open` back to its initial `false`. The visible result was
+ * a button that appeared to do nothing — the dialog opened and closed within the
+ * same commit, before a paint.
+ *
+ * Hoisting them to module scope gives them a stable identity, so the dialog's
+ * state survives re-renders of the page around it.
+ */
+function AddTaskTrigger({ employees }) {
+  return <TaskFormDialog employees={employees} triggerLabel="Add task" />;
+}
+
+function EditTaskTrigger({ record, employees }) {
+  return <TaskFormDialog task={record} employees={employees} triggerLabel="Edit" />;
+}
 
 const Page = createAdminListPage({
   title: 'Tasks',
@@ -61,10 +87,8 @@ const Page = createAdminListPage({
   ],
 
   form: {
-    Trigger: ({ employees }) => <TaskFormDialog employees={employees} triggerLabel="Add task" />,
-    EditTrigger: ({ record, employees }) => (
-      <TaskFormDialog task={record} employees={employees} triggerLabel="Edit" />
-    ),
+    Trigger: AddTaskTrigger,
+    EditTrigger: EditTaskTrigger,
     triggerProps: (extra) => ({ employees: extra?.employees || [] }),
     editProps: (extra) => ({ employees: extra?.employees || [] }),
   },

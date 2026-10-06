@@ -1,7 +1,7 @@
 import { Op, literal, fn, col } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
-import { TASK_STATUS } from '@virallink/shared/enums';
+import { TASK_STATUS } from '../shared/enums.js';
 
 const { Task, Employee } = models;
 
@@ -147,6 +147,76 @@ export async function getTask(id) {
   const task = await Task.findByPk(id, { include: LIST_INCLUDE });
   if (!task) throw AppError.notFound('Task not found');
   return toTaskJson(task);
+}
+
+/**
+ * The signed-in person's own tasks — the "My tasks" view.
+ *
+ * Resolved entirely server-side: `user` is request.user, whose employeeId was
+ * read from the session by requireAuth, so a caller can never ask for someone
+ * else's list through this endpoint — there is no parameter to tamper with.
+ *
+ * An account with no employee link is a first-class answer, not an error: the
+ * UI explains that an administrator must link the account in Settings → Users.
+ * A soft-deleted employee counts as unlinked too, so a departed person's work
+ * never appears on someone else's screen after a restore cycle.
+ */
+export async function myTasks(user) {
+  const unlinked = {
+    linked: false,
+    employee: null,
+    counts: { byStatus: {}, open: 0, overdue: 0, done: 0 },
+    tasks: [],
+  };
+
+  if (!user?.employeeId) return unlinked;
+
+  const employee = await Employee.findByPk(user.employeeId, { attributes: ['id', 'name'] });
+  if (!employee) return unlinked;
+
+  const tasks = await Task.findAll({
+    where: { assigneeId: employee.id },
+    include: LIST_INCLUDE,
+    order: [
+      // Same ordering as the admin board: urgent first, then soonest deadline
+      // (undated last), newest as the tiebreak.
+      [literal("CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END"), 'ASC'],
+      [literal('dueDate IS NULL, dueDate'), 'ASC'],
+      ['createdAt', 'DESC'],
+    ],
+    /*
+     * Bounded in practice: a per-person backlog at agency scale is tens of
+     * rows, not thousands. The cap keeps a years-long history from streaming
+     * into one render, and the counts are computed from the same set below so
+     * every badge matches exactly what is on screen.
+     */
+    limit: 500,
+  });
+
+  const byStatus = {};
+  let open = 0;
+  let overdue = 0;
+  let done = 0;
+  const now = new Date();
+
+  for (const task of tasks) {
+    byStatus[task.status] = (byStatus[task.status] || 0) + 1;
+
+    if (OPEN_STATUSES.includes(task.status)) {
+      open += 1;
+      // Due date has passed and it is not finished — same rule as the admin
+      // tasks page uses to render "Overdue".
+      if (task.dueDate && new Date(task.dueDate) < now) overdue += 1;
+    }
+    if (task.status === TASK_STATUS.DONE) done += 1;
+  }
+
+  return {
+    linked: true,
+    employee: { id: employee.id, name: employee.name },
+    counts: { byStatus, open, overdue, done },
+    tasks: tasks.map(toTaskJson),
+  };
 }
 
 export async function createTask(payload) {

@@ -126,27 +126,38 @@ export function ContentBoard({ board, clients = [], canWrite = true, week }) {
 
       <BoardSummary totals={board?.totals} week={week} />
 
-      <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-4">
+      {/*
+        Fit-to-screen rather than a horizontal scroll strip.
+
+        auto-fit + minmax does three things at once: on a wide screen all nine
+        stages share one row edge-to-edge; on a narrower screen the surplus
+        stages wrap onto a second row (aligned to the same tracks, so column
+        order still reads left-to-right); on a phone it degrades to one or two
+        columns. The board therefore never requires horizontal scrolling —
+        which is the whole point of the grid replacing the old fixed w-72
+        flex row.
+      */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3 pb-4">
         {columns.map((column) => (
           <section
             key={column.stage}
             onDragOver={(event) => canWrite && event.preventDefault()}
             onDrop={(event) => handleDrop(event, column.stage)}
             className={cn(
-              'flex w-72 shrink-0 flex-col rounded-lg border bg-surface-muted',
+              'flex min-w-0 flex-col rounded-lg border bg-surface-muted',
               column.blocked ? 'border-amber-300' : 'border-line',
               dragging ? 'border-dashed' : '',
             )}
             aria-label={CONTENT_STAGE_LABELS[column.stage]}
           >
             <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-              <h2 className="text-sm font-semibold text-ink">
+              <h2 className="min-w-0 text-sm font-semibold text-ink">
                 {CONTENT_STAGE_LABELS[column.stage]}
                 {column.blocked ? (
                   <span className="ml-1.5 text-[10px] font-normal text-amber-700">waiting on client</span>
                 ) : null}
               </h2>
-              <span className="rounded bg-surface px-1.5 py-0.5 text-xs font-medium text-ink-muted">
+              <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-xs font-medium text-ink-muted">
                 {column.count}
               </span>
             </header>
@@ -216,7 +227,7 @@ function ContentCard({ card, canWrite, isDragging = false, onDragStart, onDragEn
       )}
     >
       <button type="button" onClick={onOpen} className="block w-full text-left">
-        <p className="text-sm font-medium text-ink">{card.title}</p>
+        <p className="break-words text-sm font-medium text-ink">{card.title}</p>
 
         <p className="mt-1 text-xs text-ink-subtle">
           {card.clientName ? `${card.clientName} · ` : ''}

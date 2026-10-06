@@ -1,7 +1,7 @@
 import { adminData } from '../../lib/adminData';
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader, AdminPanel, StatCard } from '@/components/admin/AdminUI';
-import { CONTENT_STAGE_LABELS } from '@virallink/shared/enums';
+import { CONTENT_STAGE_LABELS } from '@/shared/enums';
 // Default import: next/link has no named `Link` export, so `import { Link }`
 // silently yields undefined and React reports "Element type is invalid" at render
 // time rather than at build time.

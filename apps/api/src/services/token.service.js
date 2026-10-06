@@ -181,6 +181,10 @@ export function requireAuth(models) {
         name: user.name,
         email: user.email,
         tokenVersion: user.tokenVersion,
+        // The employee record this account works as, if linked. Services that
+        // need "this person's own data" (e.g. My tasks) resolve through it
+        // server-side, so the client never chooses an identity to act as.
+        employeeId: user.employeeId ?? null,
         roles: user.roles.map((role) => role.key),
         permissions: [
           ...new Set(user.roles.flatMap((role) => role.permissions.map((permission) => permission.key))),

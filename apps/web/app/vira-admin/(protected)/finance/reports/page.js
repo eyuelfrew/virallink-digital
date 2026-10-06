@@ -2,7 +2,7 @@ import { adminData } from '../../lib/adminData';
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader, AdminPanel } from '@/components/admin/AdminUI';
 import { StatCard } from '@/components/admin/AdminUI';
-import { formatMoney } from '@virallink/shared/format';
+import { formatMoney } from '@/shared/format';
 import { TrendingUp, TrendingDown, Wallet, ReceiptText } from 'lucide-react';
 
 export const metadata = { title: 'Financial reports' };

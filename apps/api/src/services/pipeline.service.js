@@ -6,7 +6,7 @@ import {
   CONTENT_STAGE_ORDER,
   CONTENT_BLOCKED_STAGES,
   PROPOSAL_STATUS,
-} from '@virallink/shared/enums';
+} from '../shared/enums.js';
 
 const { ContentDeliverable, ContentStageEvent, ContentMetric, ClientProposal, Client, Employee, User } = models;
 

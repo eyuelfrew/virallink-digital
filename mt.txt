@@ -1,0 +1,23 @@
+HTTP/1.1 400 Bad Request
+Content-Security-Policy: default-src 'self';base-uri 'self';font-src 'self' https://fonts.gstatic.com data:;form-action 'self';frame-ancestors 'none';img-src 'self' data: blob: http://localhost:3000 https:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;connect-src 'self' http://localhost:3000
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-site
+Origin-Agent-Cluster: ?1
+Referrer-Policy: strict-origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Download-Options: noopen
+X-Frame-Options: SAMEORIGIN
+X-Permitted-Cross-Domain-Policies: none
+X-XSS-Protection: 0
+Vary: Origin, Accept-Encoding
+Access-Control-Allow-Credentials: true
+Access-Control-Expose-Headers: X-Request-Id,Retry-After
+X-Request-Id: 1ba4faed-6818-4ad2-9e55-20393ab3765a
+Content-Type: application/json; charset=utf-8
+Content-Length: 119
+ETag: "77-fhK8GFWszaKNLThRm7DR8EYxp/U"
+Date: Tue, 06 Oct 2026 07:49:56 GMT
+Connection: keep-alive
+Keep-Alive: timeout=61
+

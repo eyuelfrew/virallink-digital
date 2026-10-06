@@ -21,7 +21,7 @@ import {
   PAYMENT_METHOD,
   INVOICE_STATUS,
   EMPLOYMENT_STATUS,
-} from '@virallink/shared/enums';
+} from '../shared/enums.js';
 
 const {
   Company,
