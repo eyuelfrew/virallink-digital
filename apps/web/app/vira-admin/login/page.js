@@ -28,7 +28,9 @@ export default async function LoginPage({ searchParams }) {
 
   // Already signed in: send them to the dashboard rather than showing the form.
   const session = await getSession();
-  if (session) redirect(`${ADMIN_PATH}/dashboard`);
+  if (session) {
+    redirect(`${ADMIN_PATH}/${session.permissions?.includes('client.read') ? 'dashboard' : 'my-tasks'}`);
+  }
 
   const store = await cookies();
 

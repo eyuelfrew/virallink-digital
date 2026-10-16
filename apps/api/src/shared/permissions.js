@@ -323,15 +323,6 @@ export const ADMIN_NAV = Object.freeze([
     ],
   },
   {
-    label: 'Team',
-    icon: 'Users',
-    permission: PERMISSIONS.EMPLOYEE_READ,
-    children: [
-      { label: 'Employees', href: '/vira-admin/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
-      { label: 'Roles & permissions', href: '/vira-admin/settings/roles', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
-    ],
-  },
-  {
     label: 'System',
     icon: 'Settings',
     permission: PERMISSIONS.SETTINGS_READ,

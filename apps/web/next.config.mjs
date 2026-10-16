@@ -70,6 +70,7 @@ const nextConfig = {
 
   async redirects() {
     return [
+      { source: '/vira-admin', destination: '/vira-admin/my-tasks', permanent: false },
       // Normalise trailing slashes so each page has exactly one canonical URL.
       { source: '/services/:slug/', destination: '/services/:slug', permanent: true },
       { source: '/portfolio/:slug/', destination: '/portfolio/:slug', permanent: true },

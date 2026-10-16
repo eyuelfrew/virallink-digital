@@ -208,7 +208,6 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.PROJECT_WRITE,
     PERMISSIONS.CLIENT_READ,
     PERMISSIONS.CLIENT_WRITE,
-    PERMISSIONS.TASK_ASSIGN,
   ],
 
   [ROLES.CONTENT_WRITER]: [
@@ -225,8 +224,6 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.TASK_READ,
     PERMISSIONS.TASK_WRITE,
     PERMISSIONS.TASK_ASSIGN,
-    PERMISSIONS.SOCIAL_READ,
-    PERMISSIONS.SOCIAL_WRITE,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
   ],
@@ -261,8 +258,6 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.CONTENT_WRITE,
     PERMISSIONS.BLOG_READ,
     PERMISSIONS.BLOG_WRITE,
-    PERMISSIONS.SEO_READ,
-    PERMISSIONS.SEO_WRITE,
   ],
 
   [ROLES.MARKETING_COORDINATOR]: [
@@ -274,6 +269,7 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.TASK_WRITE,
     PERMISSIONS.TASK_ASSIGN,
   ],
+});
 
 export const ROLE_LABELS = Object.freeze({
   [ROLES.SUPER_ADMIN]: 'Super admin',
@@ -366,15 +362,6 @@ export const ADMIN_NAV = Object.freeze([
       { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Reports', href: '/vira-admin/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
-    ],
-  },
-  {
-    label: 'Team',
-    icon: 'Users',
-    permission: PERMISSIONS.EMPLOYEE_READ,
-    children: [
-      { label: 'Employees', href: '/vira-admin/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
-      { label: 'Roles & permissions', href: '/vira-admin/settings/roles', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
     ],
   },
   {

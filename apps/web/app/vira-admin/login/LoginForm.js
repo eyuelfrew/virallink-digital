@@ -53,7 +53,15 @@ export default function LoginForm({ next = '', hasStaleCookie = false }) {
        * could pass ?next=https://evil.example and the successful sign-in would
        * bounce the admin off-site — a classic open-redirect.
        */
-      const target = next.startsWith('/') && !next.startsWith('//') ? next : '/vira-admin/dashboard';
+      const fallback = data.data?.user?.permissions?.includes('client.read')
+        ? '/vira-admin/dashboard'
+        : '/vira-admin/my-tasks';
+      const target = next.startsWith('/vira-admin/') &&
+        !next.startsWith('//') &&
+        !next.includes('\\') &&
+        !next.startsWith('/vira-admin/login')
+        ? next
+        : fallback;
 
       // Full navigation rather than router.push so the new cookie is picked up by
       // the server components that will run on the next render.

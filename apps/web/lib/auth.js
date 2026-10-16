@@ -65,7 +65,7 @@ export async function requirePermission(permission) {
   const session = await requireSession();
 
   if (permission && !session.permissions?.includes(permission)) {
-    redirect(`${ADMIN_PATH}`);
+    redirect(`${ADMIN_PATH}/my-tasks`);
   }
 
   return session;
