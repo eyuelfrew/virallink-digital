@@ -17,7 +17,7 @@ Two constraints confirmed by the client and applied throughout:
 
 ## 1. Logo analysis
 
-Measured directly from `image.avif` (not eyeballed):
+Measured directly from the source artwork (`apps/web/public/brand/logo.avif`, not eyeballed):
 
 | Property | Value |
 | --- | --- |

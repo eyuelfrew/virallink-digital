@@ -40,3 +40,6 @@ coverage/
 # Build artefacts
 dist/
 *.tsbuildinfo
+
+# Local scratch files (never part of the app)
+/tmp-*
