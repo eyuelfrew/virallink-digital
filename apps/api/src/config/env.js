@@ -143,6 +143,22 @@ const schema = z.object({
   ACTIVITY_RETENTION_DAYS: numericString(365),
   BACKUP_DIR: z.string().default('./storage/backups'),
   BACKUP_RETENTION_COUNT: numericString(14),
+
+  /*
+   * Telegram bot.
+   *
+   * Off by default so a deployment without a bot is not broken by its absence:
+   * every code path checks `TELEGRAM_ENABLED` first and no-ops otherwise. When
+   * on, the webhook secret is required — it is what stops a stranger who finds
+   * the webhook URL from driving the bot.
+   */
+  TELEGRAM_ENABLED: booleanish.default('false'),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_BOT_USERNAME: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  TELEGRAM_WEBHOOK_URL: z.string().optional(),
+  TELEGRAM_ANNOUNCE_CHAT_ID: z.string().optional(),
+  TELEGRAM_LINK_CODE_TTL_MINUTES: numericString(30),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -205,6 +221,12 @@ if (env.isProduction) {
   }
   if (env.STORAGE_DRIVER === 's3' && (!env.STORAGE_BUCKET || !env.STORAGE_ACCESS_KEY)) {
     problems.push('STORAGE_DRIVER=s3 requires STORAGE_BUCKET and STORAGE_ACCESS_KEY');
+  }
+  if (env.TELEGRAM_ENABLED) {
+    if (!env.TELEGRAM_BOT_TOKEN) problems.push('TELEGRAM_ENABLED requires TELEGRAM_BOT_TOKEN');
+    if (!env.TELEGRAM_WEBHOOK_SECRET) {
+      problems.push('TELEGRAM_ENABLED requires TELEGRAM_WEBHOOK_SECRET (guards the public webhook)');
+    }
   }
 
   if (problems.length) {

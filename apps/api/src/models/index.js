@@ -71,6 +71,7 @@ const {
   Role,
   User,
   RefreshToken,
+  TelegramOutbox,
   Company,
   SocialLink,
   CompanyStat,
@@ -162,6 +163,11 @@ Role.belongsToMany(User, { ...userRolesThrough, as: 'users', foreignKey: 'roleId
 
 RefreshToken.belongsTo(User, { as: 'user', foreignKey: 'userId', onDelete: 'CASCADE' });
 User.hasMany(RefreshToken, { as: 'refreshTokens', foreignKey: 'userId' });
+
+// Outbound Telegram queue rows. SET NULL so removing a user does not erase the
+// record that a message was sent to them.
+TelegramOutbox.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+User.hasMany(TelegramOutbox, { as: 'telegramOutbox', foreignKey: 'userId' });
 
 /*
  * A user may be linked to the employee record they work as. This is what lets

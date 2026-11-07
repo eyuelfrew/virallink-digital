@@ -49,6 +49,29 @@ export function errorHandler(error, request, response, _next) {
     });
   }
 
+  /*
+   * A unique-index violation is a conflict, not a bug. Reaching here means the
+   * caller did not anticipate it — most often a value still held by a
+   * soft-deleted row, which the paranoid scope hides. Reporting 409 names the
+   * offending column instead of returning an opaque 500.
+   */
+  if (error.name === 'SequelizeUniqueConstraintError') {
+    const fields = Object.keys(error.fields || {});
+
+    logger.warn(
+      { req: { id: requestId, method: request.method, path: request.originalUrl }, fields },
+      'unique constraint violation',
+    );
+
+    return response.status(409).json({
+      error: {
+        code: 'CONFLICT',
+        message: fields.length ? `That ${fields.join(' and ')} is already in use` : 'That value is already in use',
+        requestId,
+      },
+    });
+  }
+
   // Body parser failures (malformed JSON, oversized payload).
   if (error.type === 'entity.parse.failed' || error instanceof SyntaxError) {
     return response.status(400).json({

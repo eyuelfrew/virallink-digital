@@ -79,7 +79,7 @@ virallink/
 └─ nginx/                      site + api vhost, TLS, caching rules
 ```
 
-Versions pinned from the registry today: `next@16.3.8`, `react@19.3.0`,
+Versions pinned from the registry today: `next@16.4.2`, `react@19.3.0`,
 `tailwindcss@4.3.3`, `express@5.2.1`, `sequelize@6.37.8`, `mysql2@3.24.5`,
 `zod@4.6.5`, `jose@6.2.12`, `bcrypt@6.0.0`, `helmet@8.3.0`,
 `express-rate-limit@8.7.0`, `motion@13.4.6`, `lucide-react@1.49.0`,
@@ -255,7 +255,7 @@ title, editable by an admin.
              /portfolio   /portfolio/[id]
              /blog        /blog/new  /blog/[id]
              /inquiries   /inquiries/[id]
-             /finance     /finance/transactions  /finance/invoices  /finance/reports
+             /finance     /finance/transactions  /finance/invoices
              /activity
              /settings    /settings/company  /settings/team  /settings/media
 ```
@@ -306,7 +306,6 @@ GET    /public/blog          GET /public/blog/:slug
 POST   /contact              rate limited, honeypot, spam score
 CRUD   /employees  /shareholders  /clients  /services  /portfolio  /blog
 CRUD   /finance/transactions  /finance/invoices  /finance/payments  /finance/categories
-GET    /finance/reports/summary?from=&to=
 GET    /dashboard/summary
 GET    /activity             filtered, paginated
 POST   /media  DELETE /media/:id

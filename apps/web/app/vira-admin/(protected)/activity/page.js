@@ -2,13 +2,15 @@ import { adminData, toQuery } from '../lib/adminData';
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader, AdminPanel, TableWrapper, Th, Td } from '@/components/admin/AdminUI';
 import { AdminToolbar, AdminPagination } from '@/components/admin/AdminTableParts';
+import { ClearActivityDialog } from '@/components/admin/ClearActivityDialog';
 import { DateCell } from '@/components/admin/Badge';
 import { History } from 'lucide-react';
 
 export const metadata = { title: 'Activity log' };
 
 export default async function ActivityPage({ searchParams }) {
-  await requirePermission('activity.read');
+  const session = await requirePermission('activity.read');
+  const canClear = session.permissions?.includes('activity.delete');
 
   const params = await searchParams;
 
@@ -27,6 +29,7 @@ export default async function ActivityPage({ searchParams }) {
       <AdminHeader
         title="Activity log"
         description="Every action taken in the admin, with who did it and when."
+        action={canClear ? <ClearActivityDialog /> : null}
       />
 
       <AdminPanel dense>

@@ -52,6 +52,7 @@ const {
   Payment,
   ActivityLog,
   Media,
+  User,
 } = models;
 
 /** Columns a client may write for each resource. Anything else is dropped. */
@@ -229,7 +230,7 @@ export async function listEmployees({ page, pageSize, search, sort, order, depar
   if (departmentId) where.departmentId = departmentId;
   if (status) where.employmentStatus = status;
 
-  return listResource(Employee, {
+  const result = await listResource(Employee, {
     page,
     pageSize,
     search,
@@ -242,6 +243,28 @@ export async function listEmployees({ page, pageSize, search, sort, order, depar
       { model: Media, as: 'photo' },
     ],
   });
+
+  // Which of these employees already have a sign-in. The admin uses it to offer
+  // "Create login" only where one is missing, so a person is never retyped into
+  // the user form. One query for the whole page rather than one per row.
+  const ids = result.rows.map((employee) => employee.id);
+  const logins = ids.length
+    ? await User.findAll({
+        where: { employeeId: { [Op.in]: ids } },
+        attributes: ['id', 'email', 'isActive', 'employeeId'],
+      })
+    : [];
+  const loginByEmployee = new Map(logins.map((user) => [Number(user.employeeId), user]));
+
+  result.rows = result.rows.map((employee) => {
+    const login = loginByEmployee.get(Number(employee.id));
+    return {
+      ...employee.get({ plain: true }),
+      login: login ? { userId: login.id, email: login.email, isActive: login.isActive } : null,
+    };
+  });
+
+  return result;
 }
 
 export async function getEmployee(id) {
@@ -1526,6 +1549,33 @@ export async function listActivity({ page, pageSize, search, order, action, enti
   });
 
   return result;
+}
+
+/**
+ * Permanently remove activity entries inside a date range.
+ *
+ * The audit trail has no soft-delete column, so this is a hard delete — hence
+ * the care taken around the range. `to` is inclusive of the whole day, so
+ * "clear everything up to the 5th" removes the 5th as well, which is what a
+ * person selecting an end date expects rather than a silent half-day omission.
+ *
+ * At least one bound is required (enforced by the validator and repeated here),
+ * so a request that names no range cannot delete the entire table by accident.
+ */
+export async function clearActivity({ from, to }) {
+  if (!from && !to) {
+    throw AppError.badRequest('Choose a start or end date');
+  }
+
+  const createdAt = {};
+  // Bounds are UTC because Sequelize stores DATETIME in UTC by default; matching
+  // that keeps a "day" meaning the same thing here and in every other query.
+  if (from) createdAt[Op.gte] = new Date(`${from}T00:00:00.000Z`);
+  if (to) createdAt[Op.lte] = new Date(`${to}T23:59:59.999Z`);
+
+  const deleted = await ActivityLog.destroy({ where: { createdAt }, force: true });
+
+  return { deleted };
 }
 
 /* -------------------------------------------------------------------------- */

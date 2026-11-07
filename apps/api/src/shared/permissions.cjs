@@ -41,6 +41,7 @@ const PERMISSIONS = Object.freeze({
   MEDIA_DELETE: 'media.delete',
   ACTIVITY_READ: 'activity.read',
   ACTIVITY_READ_OWN: 'activity.read_own',
+  ACTIVITY_DELETE: 'activity.delete',
   TASK_READ: 'task.read',
   TASK_WRITE: 'task.write',
   TASK_DELETE: 'task.delete',
@@ -78,7 +79,9 @@ const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.ACTIVITY_READ,
     PERMISSIONS.ACTIVITY_READ_OWN,
+    PERMISSIONS.ACTIVITY_DELETE,
   ],
 
   [ROLES.EDITOR]: [

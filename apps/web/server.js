@@ -19,10 +19,32 @@
 // correct even when the variable is missing from the cPanel UI.
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 
+const path = require('node:path');
+const { loadEnvConfig } = require('@next/env');
+
+/*
+ * Next only loads .env from the web app's own directory. On cPanel the single
+ * .env lives at the repository root, one level above both apps, so load it here
+ * before Next starts. This covers runtime server-side values such as
+ * API_INTERNAL_URL when the operator follows the documented "one .env at the
+ * repo root" option. NEXT_PUBLIC_* values are still inlined at build time, so
+ * they must also be present during `npm run build`.
+ *
+ * Existing environment variables win: cPanel's Environment Variables UI is not
+ * overridden, because @next/env never replaces a value that is already set.
+ */
+// Passenger always assigns PORT. Capture it before loading the shared .env,
+// because that file also carries the API's PORT (4000); falling back to it here
+// would make the website try to bind the API's port when Passenger has not set
+// one explicitly.
+const passengerPort = process.env.PORT;
+
+loadEnvConfig(path.resolve(__dirname, '../..'));
+
 const http = require('node:http');
 const next = require('next');
 
-const port = Number(process.env.PORT) || 3000;
+const port = Number(passengerPort) || 3000;
 // Loopback by default. Apache proxies to this port, so it should not be
 // reachable from the internet. Override with HOST only if a reverse proxy
 // terminates TLS in front of the app.

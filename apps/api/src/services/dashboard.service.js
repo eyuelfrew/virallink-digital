@@ -1,6 +1,5 @@
 import { Op, fn, col, literal } from 'sequelize';
 import { models } from '../models/index.js';
-import AppError from '../utils/AppError.js';
 import { cached, cacheKey } from '../utils/cache.js';
 import {
   INQUIRY_STATUS,
@@ -31,7 +30,6 @@ const {
   Employee,
   Shareholder,
   FinancialTransaction,
-  FinancialCategory,
   Invoice,
   ContactInquiry,
   ActivityLog,
@@ -375,81 +373,6 @@ async function getUpcomingDeadlines(limit = 6) {
   ]
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
     .slice(0, limit);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Reports                                                                    */
-/* -------------------------------------------------------------------------- */
-
-/**
- * A financial report over an arbitrary range, for the reports page.
- * Returns cents and a per-category breakdown.
- */
-export async function getFinanceReport({ from, to, type = null } = {}) {
-  if (!from || !to) throw AppError.badRequest('Both a start and end date are required');
-  if (new Date(from) > new Date(to)) throw AppError.badRequest('The start date must come before the end date');
-
-  const where = {
-    transactionDate: { [Op.between]: [from, to] },
-    status: TRANSACTION_STATUS.COMPLETED,
-  };
-  if (type) where.type = type;
-
-  // raw: true sends these expressions straight to MySQL, so they name physical
-  // columns rather than model attributes.
-  const [totals, byCategory] = await Promise.all([
-    FinancialTransaction.findAll({
-      attributes: [
-        'type',
-        [fn('SUM', literal('amount')), 'total'],
-        [fn('COUNT', literal('id')), 'count'],
-      ],
-      where,
-      group: ['type'],
-      raw: true,
-    }),
-    FinancialTransaction.findAll({
-      attributes: [
-        'categoryId',
-        [fn('SUM', literal('amount')), 'total'],
-        [fn('COUNT', literal('id')), 'count'],
-      ],
-      where,
-      group: ['categoryId'],
-      raw: true,
-    }),
-  ]);
-
-  const incomeCents = cents(totals.find((t) => t.type === TRANSACTION_TYPE.INCOME)?.total);
-  const expenseCents = cents(totals.find((t) => t.type === TRANSACTION_TYPE.EXPENSE)?.total);
-
-  const categories = byCategory.filter((row) => row.categoryId);
-  let namedCategories = [];
-  if (categories.length) {
-    const found = await FinancialCategory.findAll({
-      where: { id: { [Op.in]: categories.map((c) => c.categoryId) } },
-      attributes: ['id', 'name', 'type'],
-    });
-    const byId = new Map(found.map((c) => [c.id, c]));
-    namedCategories = categories.map((row) => ({
-      categoryId: row.categoryId,
-      name: byId.get(row.categoryId)?.name || 'Uncategorised',
-      type: byId.get(row.categoryId)?.type || null,
-      totalCents: cents(row.total),
-      count: Number(row.count),
-    }));
-  }
-
-  return {
-    from,
-    to,
-    currency: 'ETB',
-    incomeCents,
-    expenseCents,
-    profitCents: incomeCents - expenseCents,
-    transactionCount: totals.reduce((sum, t) => sum + Number(t.count), 0),
-    byCategory: namedCategories.sort((a, b) => b.totalCents - a.totalCents),
-  };
 }
 
 export { getCounts, getFinanceSummary, getMonthlyTrend };

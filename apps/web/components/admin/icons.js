@@ -2,7 +2,7 @@ import {
   LayoutDashboard, FileStack, Users, Wallet, Settings, Briefcase, FolderKanban,
   Newspaper, Inbox, UserRound, Building2, PieChart, ArrowLeftRight, ReceiptText,
   ChartColumn, Building, Image, ShieldCheck, History, ListTodo, FolderOpen,
-  Target, Mail, Phone, MapPin, UserPlus, Calendar, Tag, ListChecks,
+  Target, Mail, Phone, MapPin, UserPlus, Calendar, Tag, ListChecks, UserRoundCog,
 } from 'lucide-react';
 
 /**
@@ -22,7 +22,7 @@ export const ICONS = {
   Briefcase, FolderKanban, Newspaper, Inbox, UserRound, Building2, PieChart,
   ArrowLeftRight, ReceiptText, ChartColumn, Building, Image, ShieldCheck, History,
   ListTodo, FolderOpen, Target, Mail, Phone, MapPin, UserPlus, Calendar, Tag,
-  ListChecks,
+  ListChecks, UserRoundCog,
 };
 
 /** Render an icon by name. Unknown or missing names fall back to a neutral glyph. */

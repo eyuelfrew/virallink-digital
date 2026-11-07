@@ -16,8 +16,8 @@ Two independent applications:
 
 | App | Directory | Startup | Port |
 | --- | --- | --- | --- |
-| Website | `apps/web` | `npm run start` → `next start` | 3000 |
-| API | `apps/api` | `npm run start` → `node src/server.js` | 4000 |
+| Website | `apps/web` | `server.js` | 3000 |
+| API | `apps/api` | `src/server.js` | 4000 |
 
 The browser never talks to the API directly. Admin requests go to the website,
 which forwards them over loopback. That means **the API port never needs to be
@@ -35,8 +35,8 @@ exposed or firewalled** — leave it bound to `127.0.0.1`.
 
 Note the full prefixed names — that is what goes in `.env`.
 
-Then **phpMyAdmin → your database → Import** is not needed. Run the migrations
-instead (step 5), which is safer than importing SQL by hand.
+Then **phpMyAdmin -> your database -> Import** is not needed. The API applies the migrations
+on first boot (step 6), which is safer than importing SQL by hand.
 
 ---
 
@@ -46,7 +46,6 @@ Upload the repository **excluding** these:
 
 ```
 node_modules
-.next
 .git
 .env
 storage/media/*
@@ -55,13 +54,20 @@ storage/media/*
 Use cPanel File Manager, or from a local terminal:
 
 ```bash
-# Build locally first, so the server never compiles
-npm install
-npm run build
+# Build locally first, so the server never compiles. Use production public
+# values here: NEXT_PUBLIC_* are inlined at build time.
+# Bash / Git Bash:
+NEXT_PUBLIC_SITE_URL=https://yourdomain.com npm run build
+
+# PowerShell:
+$env:NEXT_PUBLIC_SITE_URL="https://yourdomain.com"; npm run build
+
+# Confirm the real origin was baked in, not localhost:
+#   grep "Sitemap:" apps/web/.next/server/app/robots.txt.body
 
 # Create the archive
-tar --exclude=node_modules --exclude=.next --exclude=.env --exclude=.git \
-    --exclude=storage -czf virallink.tar.gz apps packages package.json .env.example
+tar --exclude=node_modules --exclude=.env --exclude=.git \
+    --exclude=storage -czf virallink.tar.gz apps packages package.json package-lock.json .env.example
 ```
 
 Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
@@ -89,7 +95,7 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Application mode | Production |
 | Application root | `virallink/apps/web` |
 | Application URL | `yourdomain.com` |
-| Application startup file | `server.js` |
+| Application startup file | `server.js` (or `index.js`, an included alias) |
 
 **Application 2 — API**
 
@@ -99,7 +105,7 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Application mode | Production |
 | Application root | `virallink/apps/api` |
 | Application URL | `api.yourdomain.com` |
-| Application startup file | `src/server.js` |
+| Application startup file | `src/server.js` (or `index.js`, an included alias) |
 
 The API startup file is `src/server.js`, not `server.js`.
 
@@ -111,19 +117,32 @@ built from `NEXT_PUBLIC_SITE_URL`.
 
 ## 4. Install dependencies
 
-Upload the code **including** `node_modules`, or run `npm install` once at the
-repository root from **Run NPM Script** or the cPanel Terminal:
+**Never upload `node_modules` from a Windows or macOS machine.** `bcrypt` and
+`sharp` contain native binaries compiled for the machine that installed them; a
+Windows build fails on the Linux server with a module-load error, and the API
+will not start. Install on the server so npm downloads the Linux binaries.
+
+Run once at the repository root from **Terminal**:
 
 ```bash
-cd ~/virallink && npm install
+cd ~/virallink && npm ci --omit=dev
 ```
 
-Install **once at the repository root**. npm workspaces then links `apps/api` and
+If the host only offers a per-application **Run NPM Install** action, run it for
+`apps/api` and then `apps/web`. That creates app-local dependency trees and uses
+more disk, but it is the only option without Terminal.
+
+Install **once at the repository root** when possible. npm workspaces then links `apps/api` and
 `apps/web` against the hoisted `node_modules`. Running it separately per app
 duplicates ~300MB and can break workspace resolution.
 
-Note what is *not* needed: no migrate step, no seed step, no admin-creation
-command. The API does all three on startup — see steps 6 and 7.
+If the host has no Terminal and no npm install action, upload a `node_modules`
+tree that was installed **on Linux with the same Node major version** as the
+cPanel app. A local development tree is not usable.
+
+The archive from step 2 already contains `apps/web/.next`, so the server never
+compiles. Note what is *not* needed: no migrate step, no seed step, no
+admin-creation command. The API does all three on startup - see steps 6 and 7.
 
 ---
 
@@ -133,21 +152,28 @@ Two options. Use the cPanel UI if you have it; otherwise a `.env` file.
 
 ### Option A — the UI
 
-**Setup Node.js App → your app → Environment Variables**. Add the same variables
-to both apps, adjusting `SITE_URL` and `CORS_ORIGINS`:
+**Setup Node.js App -> your app -> Environment Variables**. Add only the
+variables each app needs.
+
+**Website app** (`apps/web`):
 
 ```env
 NODE_ENV=production
-
-# API only
-PORT=4000
-API_HOST=127.0.0.1
-
-# Shared
 SITE_URL=https://yourdomain.com
 NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 NEXT_PUBLIC_API_PUBLIC_URL=
 API_INTERNAL_URL=http://127.0.0.1:4000
+```
+
+**API app** (`apps/api`):
+
+```env
+NODE_ENV=production
+PORT=4000
+API_HOST=127.0.0.1
+
+SITE_URL=https://yourdomain.com
+CORS_ORIGINS=https://yourdomain.com
 
 DB_HOST=localhost
 DB_PORT=3306
@@ -162,8 +188,6 @@ JWT_REFRESH_TTL=30d
 COOKIE_SECURE=true
 BCRYPT_ROUNDS=12
 
-CORS_ORIGINS=https://yourdomain.com
-
 STORAGE_DRIVER=local
 MEDIA_ROOT=/home/cpaneluser/virallink/storage/media
 MEDIA_PUBLIC_URL=/media
@@ -177,13 +201,15 @@ AUTO_MIGRATE=true
 AUTO_SEED=true
 ```
 
+The website does not need the database or JWT secrets: it only proxies admin
+requests to the API over loopback. Keep those values on the API app.
+
 `NEXT_PUBLIC_*` values are compiled into the client bundle at build time, so
 changing them requires a rebuild — not just a restart.
 
 ### Option B — a .env file
 
-Place `.env` at `/home/cpaneluser/virallink/.env`. `config/env.js` walks upward
-from the API directory and finds it. Never upload this file from a public
+Place `.env` at `/home/cpaneluser/virallink/.env`. Both `config/env.js` (API) and `apps/web/server.js` (website) load this file. Never upload this file from a public
 directory.
 
 ---
@@ -208,15 +234,17 @@ safe:
   It contains no business data — no clients, employees, testimonials or statistics.
 
 On the first boot against an empty database this creates all 41 tables, runs the
-11 migrations and seeds 44 permissions, 4 roles, 12 financial categories and the
+14 migrations and seeds 45 permissions, 15 roles, 12 financial categories and the
 company profile. Every later boot finds nothing pending and takes a few
 milliseconds.
 
 **On concurrent processes:** Passenger starts several processes for one
 application and they all execute this at once on a deploy. Two of them running the
-same migration simultaneously is how a schema gets corrupted, so the migration
-step is serialised with a MySQL advisory lock. The second process waits for the
-lock, then finds nothing pending.
+same migration simultaneously is how a schema gets corrupted, so the schema
+bootstrap is serialised with a MySQL advisory lock. The second process waits for
+the lock, then finds nothing pending. Seeding is inside the same lock, because
+the company profile and financial categories are read-then-inserted and can
+otherwise be duplicated by a concurrent first boot.
 
 Set `AUTO_MIGRATE=false` or `AUTO_SEED=false` only on a host where you *can* run
 `npm run migrate` deliberately. On this host, off means the schema is never
@@ -282,7 +310,9 @@ node -e "import('./src/config/env.js').then(async m=>{const d=(await import('./s
 Keep `MEDIA_ROOT` **outside** `public_html`. Files are served through the API's
 media route, which validates the key and resolves it inside the media root, so a
 traversal attempt cannot escape. Uploads are re-encoded to WebP by `sharp`,
-which strips EXIF including GPS coordinates.
+which strips EXIF including GPS coordinates. The public site reaches them through
+a Next.js rewrite (`/media/*` → the API over loopback), so no extra web-server
+alias is needed and the API's own address is never exposed.
 
 ---
 
@@ -464,10 +494,39 @@ Then check by hand:
 
 # 04:30 — database backup
 30 4 * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/backup.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
+
+# every 5 minutes — deliver queued Telegram notifications
+*/5 * * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/telegramOutbox.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
 ```
 
 Use the **absolute path to the node binary cPanel gave you** — `which node` from
 the terminal. A relative `node` will not resolve in cron.
+
+The Telegram drain line is only needed when `TELEGRAM_ENABLED=true`. Notifications
+are delivered immediately when they are queued, so this is only a safety net for
+anything a restarted process left behind — but on a host that recycles processes
+unpredictably, it is the difference between "usually arrives" and "arrives".
+
+---
+
+## Telegram bot (optional)
+
+Task notifications can be delivered through a Telegram bot. Nothing else requires
+a bot, and the feature is inert until it is switched on.
+
+1. Message **@BotFather**, run `/newbot`, and note the token it returns.
+2. In `.env` set `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and
+   `TELEGRAM_BOT_USERNAME` (the @name without the `@`). Generate a webhook secret
+   and set `TELEGRAM_WEBHOOK_SECRET`:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+3. Set `TELEGRAM_WEBHOOK_URL` to the API's public base URL, then register the
+   webhook (from `apps/api`): `npm run telegram:webhook -- set`.
+   Check it any time with `npm run telegram:webhook`; remove it with `-- delete`.
+4. Restart the API, then open **Account → Telegram notifications** and connect.
+
+Telegram must be able to reach the API over HTTPS. The webhook URL path contains
+the secret, and Telegram also sends it back in a header; the route requires both,
+so discovering the URL is not enough to drive the bot.
 
 ---
 

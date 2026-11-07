@@ -6,8 +6,7 @@ import { StatusBadge, DateCell, BooleanBadge } from '@/components/admin/Badge';
 import { AdminToolbar, TableEmpty } from '@/components/admin/AdminTableParts';
 import { EmployeeFormDialog } from '@/components/admin/EmployeeFormDialog';
 import { DeleteButton } from '@/components/admin/DeleteButton';
-import { EmptyState } from '@/components/site/Card';
-import { UserRound } from 'lucide-react';
+import { CreateLoginDialog } from '@/components/admin/CreateLoginDialog';
 
 /**
  * Employee management.
@@ -19,7 +18,7 @@ import { UserRound } from 'lucide-react';
 export const metadata = { title: 'Employees' };
 
 export default async function EmployeesPage({ searchParams }) {
-  await requirePermission('employee.read');
+  const session = await requirePermission('employee.read');
 
   const params = await searchParams;
 
@@ -34,13 +33,26 @@ export default async function EmployeesPage({ searchParams }) {
 
   const employees = result.data || [];
 
+  // Roles are only needed to populate the "Create login" dialog, which itself is
+  // only offered to a caller who may create accounts. A failed lookup yields an
+  // empty list rather than breaking the page.
+  const rolesResult = await adminData('/roles');
+  const roles = rolesResult.data || [];
+
+  const canCreateLogin = session.permissions?.includes('user.write');
+  const canUploadPhoto = session.permissions?.includes('media.write');
+
   return (
     <>
       <AdminHeader
         title="Employees"
         description="Only employees marked as public appear on the website."
         action={
-          <EmployeeFormDialog departments={result.departments || []} triggerLabel="Add employee" />
+          <EmployeeFormDialog
+            departments={result.departments || []}
+            triggerLabel="Add employee"
+            canUpload={canUploadPhoto}
+          />
         }
       />
 
@@ -109,10 +121,23 @@ export default async function EmployeesPage({ searchParams }) {
 
                   <Td align="right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* The link that gives this person a sign-in. Offered only
+                          where one is missing, so the row never shows a dead action. */}
+                      {employee.login ? (
+                        <BooleanBadge
+                          value={employee.login.isActive}
+                          trueLabel="Has login"
+                          falseLabel="Login off"
+                        />
+                      ) : canCreateLogin ? (
+                        <CreateLoginDialog employee={employee} roles={roles} />
+                      ) : null}
+
                       <EmployeeFormDialog
                         employee={employee}
                         departments={result.departments || []}
                         triggerLabel="Edit"
+                        canUpload={canUploadPhoto}
                       />
 
                       <DeleteButton
@@ -129,7 +154,7 @@ export default async function EmployeesPage({ searchParams }) {
           </TableWrapper>
         ) : (
           <TableEmpty
-            icon={UserRound}
+            icon="UserRound"
             hasFilters={Boolean(params?.search || params?.status)}
             title="No employees yet"
             description="Add your team here. They stay private until you mark each one as public."
@@ -148,5 +173,3 @@ export default async function EmployeesPage({ searchParams }) {
     </>
   );
 }
-
-export { EmptyState };

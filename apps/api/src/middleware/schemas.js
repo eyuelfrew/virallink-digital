@@ -43,6 +43,7 @@ import {
   weeklyReportQuerySchema,
   updateMediaSchema,
   reorderSchema,
+  clearActivitySchema,
   publicContactSchema,
 } from '../shared/schemas.js';
 
@@ -202,14 +203,6 @@ export const schemas = {
   upsertInvoice: { source: 'body', schema: upsertInvoiceSchema },
   upsertPayment: { source: 'body', schema: upsertPaymentSchema },
   upsertFinancialCategory: { source: 'body', schema: upsertFinancialCategorySchema },
-  financeReport: {
-    source: 'query',
-    schema: z.object({
-      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
-      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
-      type: z.enum(['income', 'expense']).optional(),
-    }),
-  },
 
   /* Activity */
   listActivity: {
@@ -222,6 +215,7 @@ export const schemas = {
       to: z.string().datetime().or(z.string().date()).optional(),
     }),
   },
+  clearActivity: { source: 'query', schema: clearActivitySchema },
 
   /* Media */
   listMedia: {
@@ -239,6 +233,9 @@ export const schemas = {
   upsertDepartment: { source: 'body', schema: upsertDepartmentSchema },
   listTestimonials: { source: 'query', schema: paginationQuerySchema },
   createUser: { source: 'body', schema: createUserSchema },
+  // Creating an employee profile for an existing account reuses the employee
+  // body, so the write is validated against exactly the employee columns.
+  createEmployeeForUser: { source: 'body', schema: upsertEmployeeSchema },
   upsertTask: { source: 'body', schema: upsertTaskSchema },
   updateTask: { source: 'body', schema: updateTaskSchema },
   listTasks: { source: 'query', schema: listTasksQuerySchema },

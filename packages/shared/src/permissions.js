@@ -65,6 +65,7 @@ export const PERMISSIONS = Object.freeze({
   // Audit
   ACTIVITY_READ: 'activity.read',
   ACTIVITY_READ_OWN: 'activity.read_own',
+  ACTIVITY_DELETE: 'activity.delete',
 
   // Task management (internal — never exposed on the public site)
   TASK_READ: 'task.read',
@@ -133,7 +134,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.ACTIVITY_READ,
     PERMISSIONS.ACTIVITY_READ_OWN,
+    PERMISSIONS.ACTIVITY_DELETE,
   ],
 
   [ROLES.EDITOR]: [
@@ -361,7 +364,6 @@ export const ADMIN_NAV = Object.freeze([
     children: [
       { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Reports', href: '/vira-admin/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
     ],
   },
   {

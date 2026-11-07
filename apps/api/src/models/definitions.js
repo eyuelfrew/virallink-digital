@@ -127,11 +127,60 @@ export const definitions = {
        * When set, this role determines the user's capabilities alongside the role's permissions.
        */
       role: { type: DataTypes.STRING(60), allowNull: true, defaultValue: null },
+      /**
+       * Telegram identity. `telegramChatId` is the permanent handle the bot uses to
+       * reach this person; it is claimed through a one-time `telegramLinkCode` so a
+       * user proves ownership by messaging the bot, never by typing an id.
+       */
+      telegramChatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      telegramUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      telegramLinkedAt: optionalDate(),
+      telegramLinkCode: { type: DataTypes.STRING(48), allowNull: true, defaultValue: null },
+      telegramLinkCodeExpiresAt: optionalDate(),
+      /** Per-person opt-out; linking does not force notifications on someone. */
+      telegramAlertsEnabled: booleanDefault(true),
     },
     options: {
-      indexes: [{ fields: ['email'] }, { fields: ['isActive'] }, { fields: ['employeeId'] }],
+      indexes: [
+        { fields: ['email'] },
+        { fields: ['isActive'] },
+        { fields: ['employeeId'] },
+        { unique: true, fields: ['telegramChatId'], name: 'users_telegram_chat_id_unique' },
+      ],
     },
     paranoid: true,
+  },
+
+  /**
+   * Outbound Telegram queue.
+   *
+   * Messages are written here and delivered by a separate drain step, so a
+   * recycled Passenger process between "task assigned" and "message sent" cannot
+   * lose a notification. Also carries retries and a record of what went out.
+   */
+  TelegramOutbox: {
+    tableName: 'telegram_outbox',
+    fields: {
+      id: pk(),
+      /** Target person. Null when a message goes to a fixed chat (announcements). */
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Explicit chat id, used instead of userId when set. */
+      chatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      /** Short event key, e.g. "task_assigned", for filtering and metrics. */
+      kind: { type: DataTypes.STRING(40), allowNull: false },
+      /** Rendered message: { text, parseMode?, buttons? }. */
+      payload: { type: DataTypes.JSON, allowNull: false },
+      status: { type: DataTypes.ENUM('pending', 'sent', 'failed'), allowNull: false, defaultValue: 'pending' },
+      attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      lastError: { type: DataTypes.STRING(255), allowNull: true, defaultValue: null },
+      sentAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['status', 'createdAt'] },
+        { fields: ['userId'] },
+      ],
+    },
   },
 
   /**

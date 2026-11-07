@@ -7,6 +7,50 @@ out of scope except where it shares infrastructure.
 
 ---
 
+## 0. Handoff summary (read this first)
+
+**What this system is.** A two-process monorepo: a Next.js 16 App Router frontend
+(`apps/web`, JavaScript only) and an Express 5 + Sequelize 6 + MySQL 8 API
+(`apps/api`). The admin console lives under `/vira-admin`; the API lives under
+`/api/v1`. Shared enums, permissions, Zod schemas and formatters are imported by
+both apps from `packages/shared`.
+
+**The five facts another engineer/AI must not miss:**
+
+1. **The API is the only security boundary.** The Next.js proxy cookie check,
+   page-level `requirePermission`, and hidden nav links are UX only. Every admin
+   API route independently enforces session + permission.
+2. **Permissions are the contract.** A key declared in
+   `packages/shared/src/permissions.js` is seeded to the DB, checked by API
+   middleware, and used to filter the sidebar. Adding a module means touching all
+   three, plus `ADMIN_RESOURCE_PREFIXES`.
+3. **Public and private data are physically separated.** Public reads go through
+   `/api/v1/public/*` and explicit allowlist serializers. The admin namespace has
+   no public counterpart for shareholders, employees' private fields, finance, or
+   activity logs.
+4. **Everything mutable is audited** through `activity_logs` (append-only), and
+   all money is `DECIMAL(14,2)` converted to integer cents for arithmetic.
+5. **Deployment is cPanel/Passenger, not Docker.** The API binds loopback only;
+   the web app forwards cookies over loopback. Migrations and the RBAC seed run
+   automatically and idempotently at API boot.
+
+**Where to start in the code:**
+
+| Concern | File |
+|---|---|
+| Boot, health, housekeeping | `apps/api/src/server.js`, `src/app.js` |
+| Route namespaces and mount order | `apps/api/src/routes/index.js` |
+| Every admin route + its permission | `apps/api/src/routes/v1/admin.routes.js` |
+| Permission matrix, roles, sidebar | `packages/shared/src/permissions.js` |
+| Models and associations | `apps/api/src/models/definitions.js`, `src/models/index.js` |
+| Business logic | `apps/api/src/services/*` |
+| Public privacy boundary | `apps/api/src/serializers/public.js` |
+| Admin page factory | `apps/web/app/vira-admin/(protected)/createListPage.js` |
+| Server-side admin fetch | `apps/web/app/vira-admin/(protected)/lib/adminData.js` |
+| Auth/session helpers (web) | `apps/web/lib/auth.js` |
+
+---
+
 ## 1. System context
 
 Two applications, one database, one machine:
@@ -113,6 +157,9 @@ sensitive ones):
 | POST | `/logout` | revokes the refresh token (optional `allSessions: true`), clears cookies |
 | GET | `/me` | current user + resolved permission keys |
 | POST | `/change-password` | revokes **all** sessions including the current one |
+| GET | `/telegram` | the caller's Telegram link state |
+| POST | `/telegram/link` | issues a one-time code + deep link; the chat id is learned from the bot, never supplied by the client |
+| DELETE | `/telegram/link` | detaches Telegram; outbox history is retained |
 | POST | `/verify` | cheap signature check for proxy-style callers; not authoritative |
 
 Login failures return one generic message so account existence is not revealed.
@@ -122,7 +169,12 @@ Login failures return one generic message so account existence is not revealed.
 - Permission keys are defined once in `@virallink/shared/permissions`
   (`PERMISSIONS`), seeded into `permissions` / `roles` / `role_permissions`.
 - Roles: `SUPER_ADMIN` (holds every permission — never special-cased in code),
-  `ADMIN`, `EDITOR`, `FINANCE`.
+  `ADMIN`, `EDITOR`, `FINANCE`, plus granular team roles: `SOFTWARE_ENGINEER`,
+  `VIDEO_EDITOR`, `DESIGNER`, `PROJECT_MANAGER`, `CONTENT_WRITER`,
+  `SOCIAL_MEDIA_MANAGER`, `GRAPHIC_DESIGNER`, `MOTION_DESIGNER`, `COPYWRITER`,
+  `SEO_SPECIALIST`, `MARKETING_COORDINATOR`.
+- A user may hold more than one role (`user_roles`); effective permissions are the
+  union of every role's grants.
 - Enforcement middleware (`src/middleware/rbac.js`):
   - `requirePermission(...keys)` — any-of; **declared per route**, next to the
     handler it protects, so a new endpoint cannot ship without one.
@@ -139,7 +191,7 @@ Login failures return one generic message so account existence is not revealed.
 `shareholder.read/write/delete`, `client.read/write/delete`, `inquiry.read/write`,
 `service.read/write/delete`, `project.read/write/delete`, `blog.read/write/delete`,
 `testimonial.write`, `job.write`, `finance.read/write/delete`,
-`media.read/write/delete`, `activity.read`, `activity.read_own`,
+`media.read/write/delete`, `activity.read`, `activity.read_own`, `activity.delete`,
 `task.read/write/delete/assign`, `content.read/write`.
 
 **Role → capability summary**
@@ -147,9 +199,24 @@ Login failures return one generic message so account existence is not revealed.
 | Role | Can do |
 |---|---|
 | SUPER_ADMIN | everything |
-| ADMIN | company/settings, employees, clients, inquiries, services, portfolio, blog, testimonials, jobs, tasks (incl. delete), media, own activity — **no** finance, shareholders, roles, content pipeline |
-| EDITOR | read-most, write services/portfolio/blog/testimonials/jobs, full content pipeline + tasks (no delete), media — no finance, no people records beyond read |
-| FINANCE | finance full, read clients/inquiries/shareholders, tasks, media, full activity log |
+| ADMIN | company/settings, employees, clients, inquiries, services, portfolio, blog, testimonials, jobs, tasks (incl. delete + assign), media, activity log (view all + clear) — **no** finance, shareholders, roles, content pipeline |
+| EDITOR | read company/employees/clients; write services/portfolio/blog/testimonials/jobs; full content pipeline; tasks (write + assign, no delete); media — no finance |
+| FINANCE | finance full, read clients/inquiries/shareholders, tasks (read/write), media, full activity log |
+| SOFTWARE_ENGINEER | tasks (read/write/assign), content pipeline (read/write), media (read/write), projects (read/write) |
+| VIDEO_EDITOR | tasks (read/write/assign), media (read/write) |
+| DESIGNER | tasks (read/write/assign), media (read/write) |
+| PROJECT_MANAGER | tasks (read/write/assign), projects (read/write), clients (read/write) |
+| CONTENT_WRITER | content pipeline (read/write), blog (read/write), tasks (read/write/assign) |
+| SOCIAL_MEDIA_MANAGER | tasks (read/write/assign), media (read/write) |
+| GRAPHIC_DESIGNER | tasks (read/write/assign), media (read/write) |
+| MOTION_DESIGNER | tasks (read/write/assign), media (read/write) |
+| COPYWRITER | content pipeline (read/write), blog (read/write), tasks (read/write) |
+| SEO_SPECIALIST | content pipeline (read/write), blog (read/write) |
+| MARKETING_COORDINATOR | clients (read/write), projects (read/write), tasks (read/write/assign) |
+
+The exact grants are the source of truth in `ROLE_PERMISSIONS`; this table is a
+reading aid. New roles are added by extending both `ROLES` and `ROLE_PERMISSIONS`
+in `packages/shared/src/permissions.js`; the seeder upserts them on boot.
 
 Notable deliberate separations:
 
@@ -157,6 +224,9 @@ Notable deliberate separations:
   work and must not require the power to edit a contract value.
 - Deliverables/metrics reuse `client.read/write` instead of a second `report.*`
   family, so there is only one way to grant access to client performance data.
+  The single exception is `POST /deliverables`, which also accepts `content.write`:
+  the pipeline's New card action must work for production roles that can run the
+  board but cannot edit client records. Updates and deletes stay `client.write`.
 
 ### 2.5 Validation
 
@@ -212,10 +282,12 @@ Error (`src/middleware/error.js`):
   protects login/setup with a much tighter budget.
 - **Body limits**: JSON/urlencoded capped at 1 MB; uploads capped by
   `MEDIA_MAX_BYTES`, ≤ 10 files, MIME allowlist in `fileFilter`.
-- **Audit**: `ActivityLog` is append-only (no soft delete), written through
-  `src/middleware/audit.js` + service hooks for login/login_failed/create/update/
-  delete/publish/role_change/password_change/financial_*; aged out by the
-  `prune:activity` job rather than edited by hand.
+- **Audit**: `ActivityLog` is append-only (no soft delete, no per-row edit),
+  written through `src/middleware/audit.js` + service hooks for
+  login/login_failed/create/update/delete/publish/role_change/password_change/
+  financial_*. Rows age out via the `prune:activity` job, and `activity.delete`
+  holders (SUPER_ADMIN, ADMIN) may clear a chosen date range through
+  `DELETE /activity`; that clear is itself recorded.
 - **Privacy**: contact inquiries store a *salted HMAC* of the IP (`ipHash`), never
   the raw address.
 
@@ -242,6 +314,15 @@ brevity but present on every mutating route (`v('…')`).
 | GET/PUT/DELETE | `/employees/:id` | `employee.read` / `employee.write` / `employee.delete` |
 | POST | `/employees/reorder` | `employee.write` |
 | GET/POST | `/departments` | `employee.read` / `employee.write` |
+
+> Each employee row in `GET /employees` carries a `login` field (`null`, or `{ userId, email, isActive }`)
+> reporting whether a sign-in is already linked. The Employees page uses it to offer **Create login** —
+> a dialog prefilled with the employee's name and email that creates and links the account in one step —
+> only where no sign-in exists, so the person is never retyped into the user form.
+>
+> Employees also carry `photoMediaId` (a media id, nullable). The employee form uses `PhotoField` to
+> upload a photo, which shows on the public team page once the person is marked public; removing it
+> unlinks the photo (`null`) without deleting the file from the Media library.
 
 **Shareholders** (confidential — no public counterpart)
 
@@ -295,7 +376,6 @@ brevity but present on every mutating route (`v('…')`).
 | GET/PUT | `/finance/invoices/:id` | `finance.read` / `finance.write` |
 | POST | `/finance/payments` | `finance.write` |
 | DELETE | `/finance/payments/:id` | `finance.delete` |
-| GET | `/finance/reports` | `finance.read` |
 
 **Media, branding, jobs**
 
@@ -313,21 +393,37 @@ brevity but present on every mutating route (`v('…')`).
 |---|---|---|
 | GET/POST | `/users` | `user.read` / `user.write` |
 | PUT/DELETE | `/users/:id` | `user.write` |
+| POST | `/users/:id/employee` | `employee.write` (creates + links the HR profile) |
 | GET | `/roles` | `role.read` |
+
+> `POST /users/:id/employee` is the inverse of **Create login**: for an account with no employee profile it
+> creates one from the validated employee body (name prefilled from the account) and sets `users.employeeId`.
+> The Users page offers it as **Create profile** on rows with no link.
+>
+> `email` is a unique index and MySQL keeps soft-deleted rows in it, so a deleted account still reserves its
+> address. Creating an account with an email held by an **active** account is a `409`; an email held by a
+> **deleted** one revives that account with the details just entered (a re-hire), rather than failing on the
+> index. The same check on update covers renames.
 
 **Tasks**
 
 | Method | Path | Permission |
 |---|---|---|
-| GET | `/tasks`, `/tasks/summary`, `/tasks/:id` | `task.read` |
+| GET | `/tasks`, `/tasks/board`, `/tasks/summary`, `/tasks/:id` | `task.read` |
+| GET | `/tasks/mine` | **session only** — resolves the caller's employee link; returns only their own work |
 | POST/PUT | `/tasks`, `/tasks/:id` | `task.write` |
 | DELETE | `/tasks/:id` | `task.delete` |
+
+> `/tasks/mine` is deliberately not permission-gated: like `/auth/me`, it can only
+> ever return data about the caller, so there is no parameter that selects another
+> person's tasks. It is declared before `/tasks/:id` so `mine` is not captured as an id.
 
 **Client reporting: deliverables & metrics**
 
 | Method | Path | Permission |
 |---|---|---|
-| GET/POST | `/deliverables` | `client.read` / `client.write` |
+| GET | `/deliverables` | `client.read` |
+| POST | `/deliverables` | `client.write` **or** `content.write` (the board's New card action) |
 | PUT/DELETE | `/deliverables/:id` | `client.write` |
 | POST | `/deliverables/metrics` | `client.write` (upsert: same client+month returns 200, new row 201) |
 | DELETE | `/deliverables/metrics/:id` | `client.write` |
@@ -336,6 +432,7 @@ brevity but present on every mutating route (`v('…')`).
 
 | Method | Path | Permission |
 |---|---|---|
+| GET | `/content/clients` | `content.read` (id + name only, for the board's client filter and New card form) |
 | GET | `/content/board` | `content.read` |
 | GET | `/content/cycle-time` | `content.read` |
 | GET | `/content/weekly` | `content.read` |
@@ -350,6 +447,7 @@ brevity but present on every mutating route (`v('…')`).
 | Method | Path | Permission |
 |---|---|---|
 | GET | `/activity` | `activity.read` (or `activity.read_own` scoping via `requireOwnership`) |
+| DELETE | `/activity?from=&to=` | `activity.delete` — hard-deletes entries in the range; at least one bound required; the wipe itself is logged |
 
 ### 2.9 Service layer
 
@@ -360,13 +458,16 @@ Routes are thin; logic lives in `src/services/`:
 | `auth.service.js` | login/refresh/logout, password change, cookie options, `toPublicUser` |
 | `token.service.js` | JWT sign/verify, revocation blocklist, `requireAuth`, `optionalAuth` |
 | `admin.service.js` | CRUD for company, employees, shareholders, clients, services, portfolio, blog, inquiries, finance, media, branding, users — plus activity logging on each mutation |
-| `dashboard.service.js` | `/dashboard/summary` aggregations + finance report (all SQL-side, cached per section) |
+| `dashboard.service.js` | `/dashboard/summary` aggregations (all SQL-side, cached per section) |
 | `report.service.js` | deliverables, monthly metrics, per-client report/totals |
-| `pipeline.service.js` | content board, stage moves + history, cycle time, weekly report, proposals |
+| `pipeline.service.js` | content board, client options, stage moves + history, cycle time, weekly report, proposals |
 | `task.service.js` | task CRUD, summaries, assignment |
 | `user.service.js` | user/role assignment |
 | `media.service.js` | upload validation (sharp decode), transform, local/S3 storage, `readMedia` |
 | `public.service.js` / `inquiry.service.js` | public reads and contact intake (not admin, listed for completeness) |
+| `notifications.service.js` | renders and enqueues Telegram notifications; never throws to the caller |
+| `telegram.service.js` | bot transport (`sendMessage`, enable/disable, HTML escaping) |
+| `telegram-link.service.js` | one-time link codes, `/start` redemption, unlink, link status |
 
 Cross-cutting utilities: `utils/money.js` (cents conversion, `sumCents`,
 `outstandingCents`), `utils/cache.js` (blocklist + `cached()` helper),
@@ -388,6 +489,7 @@ registered with the association graph in `src/models/index.js`. All tables use
 | Finance | `financial_categories`, `financial_transactions`, `invoices`, `invoice_items`, `payments` |
 | Production pipeline | `content_deliverables`, `content_metrics`, `content_stage_events`, `client_proposals`, `tasks` |
 | Media | `media` |
+| Notifications | `telegram_outbox` (durable outbound queue); Telegram identity columns on `users` (`telegram_chat_id`, `telegram_username`, `telegram_linked_at`, `telegram_link_code`, `telegram_link_code_expires_at`, `telegram_alerts_enabled`) |
 | Leads & audit | `contact_inquiries`, `activity_logs` (append-only — no soft delete, no updates) |
 
 Key column rules:
@@ -411,6 +513,35 @@ Key column rules:
    filesystem access (traversal guard).
 4. With `STORAGE_DRIVER=s3` the serving route is unused — the object store serves
    files directly.
+5. The admin uploads through the Next.js route `app/api/media`, which forwards the
+   multipart body untouched — the generic `/api/[...path]` proxy rewrites every
+   body as JSON and cannot carry a file. Stored files are then served **same-origin**:
+   Next rewrites `/media/*` to the API's media route over loopback, so the
+   loopback-only API is never exposed to the browser. The reusable `PhotoField`
+   component uploads on pick and submits the resulting media id; removing it clears
+   the id (`null` = unlink) without deleting the file. Wired to `employees.photoMediaId`
+   (public team photo) in `EmployeeFormDialog` and `CreateProfileDialog`.
+
+### 2.12 Telegram notifications
+
+Optional, and inert until `TELEGRAM_ENABLED=true`. Transport is a webhook
+(Telegram POSTs updates; the API calls `sendMessage` for outbound) rather than
+polling, because there are no long-running schedulers on the deployment target.
+
+- **Linking.** `POST /auth/telegram/link` issues a one-time code and deep link;
+  the user opens the bot with it and the bot learns the chat id from the update.
+  A user can never supply a chat id, so nobody can claim another account's.
+  `GET /auth/telegram` reports state; `DELETE /auth/telegram/link` detaches.
+- **Webhook.** `POST /telegram/webhook/:secret` (mounted before the admin router,
+  so it is never caught by the auth guard). Requires the secret in the path *and*
+  in `X-Telegram-Bot-Api-Secret-Token`; a missing bot token makes the route 404.
+  Updates are acknowledged before processing, so Telegram does not retry.
+- **Delivery.** Producers write to `telegram_outbox`; a drain step delivers and
+  retries. Enqueue never throws to its caller — a notification must not fail the
+  action that produced it. `npm run telegram:outbox` (cron) is the safety net.
+- **Events.** Task assigned and task status changed (Phase 1). Producer hooks are
+  best-effort and resolve the recipient from `assigneeUserId`, else the user linked
+  to the assigned employee. `task.title`/`description` are HTML-escaped.
 
 ---
 
@@ -467,6 +598,7 @@ Sidebar structure (permission in brackets):
 | Group | Items |
 |---|---|
 | — | Dashboard `/vira-admin/dashboard` (exact match) |
+| — | My tasks `/vira-admin/my-tasks` (session only; shows the caller's own assigned work) |
 | — | Tasks `[/task.read]` |
 | Production | Pipeline board `[/content.read]`, Weekly report `[/content.read]`, Proposals `[/content.read]` |
 | Content | Services `[/service.read]`, Portfolio `[/project.read]`, Blog `[/blog.read]`, Inquiries `[/inquiry.read]` |
@@ -476,12 +608,14 @@ Sidebar structure (permission in brackets):
 
 ### 3.4 Page inventory
 
-Route group `(protected)` — 22 pages, all server components, all `force-dynamic`:
+Route group `(protected)` — 24 pages, all server components, all `force-dynamic`:
 
 | Route | Page | Guard |
 |---|---|---|
 | `/vira-admin/dashboard` | Dashboard | `client.read` |
-| `/vira-admin/tasks` | Task board | `task.read` |
+| `/vira-admin/my-tasks` | My tasks (employee-facing, own work) | session only |
+| `/vira-admin/tasks` | Tasks (table view) | `task.read` |
+| `/vira-admin/tasks/board` | Tasks (kanban board) | `task.read` |
 | `/vira-admin/content` | Pipeline board (kanban) | `content.read` |
 | `/vira-admin/content/weekly` | Weekly production report | `content.read` |
 | `/vira-admin/content/proposals` | Proposals | `content.read` |
@@ -496,11 +630,11 @@ Route group `(protected)` — 22 pages, all server components, all `force-dynami
 | `/vira-admin/shareholders` | Shareholders list | `shareholder.read` |
 | `/vira-admin/finance/transactions` | Transactions | `finance.read` |
 | `/vira-admin/finance/invoices` | Invoices | `finance.read` |
-| `/vira-admin/finance/reports` | Finance reports | `finance.read` |
 | `/vira-admin/settings/company` | Company profile | `company.read` |
 | `/vira-admin/settings/media` | Media library | `media.read` |
 | `/vira-admin/settings/users` | Users & roles | `user.read` |
 | `/vira-admin/activity` | Activity log | `activity.read` |
+| `/vira-admin/account` | Account (profile + Telegram) | session only |
 
 ### 3.5 Data-fetching pattern
 
@@ -524,12 +658,13 @@ Server pages call `adminData(path)` (`(protected)/lib/adminData.js`):
 
 ### 3.6 The list-page factory
 
-Nine structurally identical modules (search + filter + paginate + create + edit +
+Seven structurally identical modules (search + filter + paginate + create + edit +
 publish + delete) are generated by `createAdminListPage(config)` in
-`(protected)/createListPage.js`. Config: `title, description, resource,
+`(protected)/createListPage.js` — currently blog, clients, inquiries, portfolio,
+services, shareholders, and tasks. Config: `title, description, resource,
 permission, permissionFor, columns, searchFields?, filters, publishable, itemName,
 icon, form`. Hand-written pages are only the genuinely unusual ones (dashboard,
-finance reports, company settings, boards, detail views).
+finance transactions and invoices, company settings, boards, detail views).
 
 Column `kind` renderers (`KINDS`): `text` (degrades objects to `name/title`,
 missing to `—`), `primary` (+ secondary line), `status`, `publish`, `date`,
@@ -550,8 +685,10 @@ Shared table furniture: `AdminToolbar` (search + filters as URL params),
 | `charts.js` | `FinanceTrendChart` (a chart only where direction over time adds meaning) |
 | `DeleteButton` | `DeleteButton`, `PublishToggle` with confirm step |
 | `ConfirmDialog` | destructive-action confirmation |
-| Form dialogs | `ClientFormDialog`, `CompanyFormDialog`, `EmployeeFormDialog`, `ServiceFormDialog`, `ProjectFormDialog`, `BlogFormDialog`, `TaskFormDialog`, `InvoiceFormDialog`, `TransactionFormDialog`, `ShareholderFormDialog`, `UserFormDialog`, `DeliverableFormDialog`, `MetricFormDialog`, `ProposalFormDialog`, `NewContentCardDialog` |
+| `PhotoField` | single-image upload + remove (uploads to `/api/media` on pick, submits the media id) |
+| Form dialogs | `ClientFormDialog`, `CompanyFormDialog`, `EmployeeFormDialog`, `CreateLoginDialog`, `CreateProfileDialog`, `ServiceFormDialog`, `ProjectFormDialog`, `BlogFormDialog`, `TaskFormDialog`, `InvoiceFormDialog`, `TransactionFormDialog`, `ShareholderFormDialog`, `UserFormDialog`, `DeliverableFormDialog`, `MetricFormDialog`, `ProposalFormDialog`, `NewContentCardDialog` |
 | Domain views | `ContentBoard` (kanban + stage moves), `ContentDetailDialog`, `ClientReportView`, `ReportExportButtons`, `ClientActivityForms`, `SetupForm` |
+| Danger/utility | `ClearActivityDialog` (range-scoped audit purge), `TelegramLinkCard` (connect/disconnect the account's Telegram) |
 
 Forms surface 422 `error.details` inline per field and 403 as a permission
 notice.
@@ -640,21 +777,23 @@ The codebase has been burned by drift between the two apps (the `deliverables`
 - **Single-process assumptions.** The token blocklist and housekeeping interval
   are in-memory — correct for the current single Passenger app, would need Redis
   (or similar) before running multiple API instances.
-- **`GET /dashboard/summary` is gated on `client.read` as a proxy permission**, and
-  the Dashboard nav entry carries no permission. That works today only because all
-  four seeded roles hold `client.read`. Any future role without it would see the
-  Dashboard link and then a 403 notice page — worth revisiting if a role that
-  cannot read clients is ever added.
+- **`GET /dashboard/summary`, the Dashboard nav entry and the page guard are
+  all gated on `client.read`.** Production roles such as Designer, Video Editor,
+  Software Engineer and Content Writer do not hold it, so they land on My tasks
+  instead. If those roles should see a dashboard, split the endpoint by permission
+  rather than widening `client.read`; the summary includes client and finance data.
 - **Page permission checks are cosmetic by design** — duplicated deliberately so a
   user never sees a page that will 403, at the cost of keeping the page guard and
   the route permission in sync by hand.
-- **`activity.read_own` vs `activity.read`** — the sidebar only exposes the log
-  for `activity.read`; `ADMIN` holds `activity.read_own` and therefore sees no log
-  link, though the endpoint honours the scoped variant.
+- **`activity.read_own` vs `activity.read`** — the sidebar exposes the log for
+  `activity.read` (the endpoint narrows to a user's own entries when only
+  `activity.read_own` is held). `ADMIN` holds `activity.read`, so it can view the
+  full log and clear ranges of it.
 
 ---
 
-*Generated from the codebase at commit `0eadf73` (branch `second`).*
+*Verified against the working tree at commit `f674746` (branch `second`), including
+the uncommitted Telegram, My Tasks, and granular-role changes.*
 
 
 

@@ -52,10 +52,61 @@ function addDays(date, count) {
   return next;
 }
 
-function isDateOnly(value) {
+/**
+ * The `YYYY-MM-DD` form of a date-only value, or null if it is not one.
+ *
+ * Sequelize hands DATEONLY columns back as plain strings, and the `week`
+ * query parameter arrives as a string too. Normalising both sides to a plain
+ * calendar day means the comparisons below are between two calendar days,
+ * with no timezone in the way.
+ *
+ * This matters more than it looks. Comparing a raw `'2026-10-15'` against a
+ * `Date` coerces the string to a timestamp — UTC midnight — while `today()`
+ * is local midnight. In a zone behind UTC the two land on different days and
+ * the comparison silently returns the wrong answer.
+ */
+function dateOnlyKey(value) {
   if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    /* Local calendar parts, not `toISOString()`. `toISOString()` converts to
+       UTC first, so a local midnight in a zone ahead of Greenwich comes back
+       as the previous day — which would shift the whole week window. */
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${value.getFullYear()}-${month}-${day}`;
+  }
+
+  if (typeof value === 'string') {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+  }
+
+  return null;
+}
+
+/**
+ * A local-midnight `Date` for a date-only value, or null.
+ *
+ * Local rather than UTC on purpose: the week starts on Monday in the
+ * calendar the agency works in, and a UTC midnight would put Sunday's
+ * pieces into the following week for anyone west of Greenwich.
+ */
+function dateOnlyDate(value) {
+  const key = dateOnlyKey(value);
+  if (!key) return null;
+
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+/** Today as a `YYYY-MM-DD` calendar day. */
+function todayKey() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 /** JSON shape for one board card. */
@@ -90,6 +141,22 @@ function toCardJson(item) {
 /* -------------------------------------------------------------------------- */
 /* The board                                                                  */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Client options for the board's filter and new-card form.
+ *
+ * The pipeline is readable by production roles that cannot read the client
+ * directory, so this deliberately returns only the two fields the board uses.
+ * Nothing is exposed that a card does not already show.
+ */
+export async function getClientOptions() {
+  const clients = await Client.findAll({
+    attributes: ['id', 'name'],
+    order: [['name', 'ASC']],
+  });
+
+  return clients.map((client) => ({ id: client.id, name: client.name }));
+}
 
 /**
  * The kanban board.
@@ -383,15 +450,22 @@ export async function getCycleTime({ clientId } = {}) {
  * exist.
  */
 export async function getWeeklyReport({ week, clientId } = {}) {
-  const anchor = isDateOnly(week) ? new Date(week) : today();
+  const anchor = dateOnlyDate(week) || today();
   const from = weekStart(anchor);
   const to = addDays(from, 7);
+
+  /* The bounds go to the database as plain calendar days. `shootDate` and
+     `scheduledFor` are DATEONLY columns, and handing Sequelize a local
+     midnight `Date` for those makes MySQL compare a timestamp against a
+     date — which shifts the window by a day in every zone that is not UTC. */
+  const fromKey = dateOnlyKey(from);
+  const toKey = dateOnlyKey(to);
 
   const scope = clientId ? { clientId } : {};
 
   const [shooting, posting, inFlight, blocked, approvals, cycle] = await Promise.all([
     ContentDeliverable.findAll({
-      where: { ...scope, shootDate: { [Op.gte]: from, [Op.lt]: to }, stage: { [Op.ne]: CONTENT_STAGE.POSTED } },
+      where: { ...scope, shootDate: { [Op.gte]: fromKey, [Op.lt]: toKey }, stage: { [Op.ne]: CONTENT_STAGE.POSTED } },
       include: [
         { model: Client, as: 'client', attributes: ['id', 'name'], required: false },
         { model: Employee, as: 'assignee', attributes: ['id', 'name'], required: false },
@@ -399,7 +473,7 @@ export async function getWeeklyReport({ week, clientId } = {}) {
       order: [['shootDate', 'ASC']],
     }),
     ContentDeliverable.findAll({
-      where: { ...scope, scheduledFor: { [Op.gte]: from, [Op.lt]: to }, stage: { [Op.ne]: CONTENT_STAGE.POSTED } },
+      where: { ...scope, scheduledFor: { [Op.gte]: fromKey, [Op.lt]: toKey }, stage: { [Op.ne]: CONTENT_STAGE.POSTED } },
       include: [
         { model: Client, as: 'client', attributes: ['id', 'name'], required: false },
         { model: Employee, as: 'assignee', attributes: ['id', 'name'], required: false },
@@ -408,7 +482,38 @@ export async function getWeeklyReport({ week, clientId } = {}) {
     }),
     ContentDeliverable.findAll({
       where: { ...scope, stage: { [Op.ne]: CONTENT_STAGE.POSTED } },
-      attributes: ['id', 'stage'],
+      /* The open-work set. It carries the three fields the totals below are
+         derived from, so they have to be selected here: without `shootDate` and
+         `scheduledFor` nothing can be overdue, and without `assigneeId` every
+         open item would count as unassigned.
+
+         The card fields and the two associations are selected as well because
+         this same set is returned as the `overdue` list, and a card without a
+         title or a client name is not a card. */
+      attributes: [
+        'id',
+        'clientId',
+        'title',
+        'type',
+        'platform',
+        'stage',
+        'url',
+        'shootDate',
+        'scheduledFor',
+        'publishedAt',
+        'revisionCount',
+        'assigneeId',
+        'idea',
+        'brainstormNotes',
+        'scriptBody',
+        'approvalNotes',
+        'notes',
+        'updatedAt',
+      ],
+      include: [
+        { model: Client, as: 'client', attributes: ['id', 'name'], required: false },
+        { model: Employee, as: 'assignee', attributes: ['id', 'name'], required: false },
+      ],
     }),
     /* Stuck: in approval for more than three days. The threshold is a guess, but a
        documented one beats an unstated threshold. */
@@ -430,11 +535,15 @@ export async function getWeeklyReport({ week, clientId } = {}) {
     if (item.stage !== CONTENT_STAGE.POSTED) stageCounts[item.stage] += 1;
   }
 
-  const overdue = inFlight.filter(
-    (item) =>
-      (isDateOnly(item.shootDate) && item.shootDate < today()) ||
-      (isDateOnly(item.scheduledFor) && item.scheduledFor < today()),
-  );
+  /* Overdue means "open, and already past a date it should have hit". Both
+     dates are compared as plain calendar days, so a piece shot yesterday
+     counts as overdue regardless of the server's timezone. */
+  const cutoff = todayKey();
+  const overdue = inFlight.filter((item) => {
+    const shoot = dateOnlyKey(item.shootDate);
+    const scheduled = dateOnlyKey(item.scheduledFor);
+    return (shoot !== null && shoot < cutoff) || (scheduled !== null && scheduled < cutoff);
+  });
 
   return {
     week: {

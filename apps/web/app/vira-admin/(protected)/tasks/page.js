@@ -1,6 +1,15 @@
 import { createAdminListPage } from '../createListPage';
 import { TaskFormDialog } from '@/components/admin/TaskFormDialog';
+import {
+  AssigneeChip,
+  DueCell,
+  TASK_PRIORITY_BAR,
+  TaskPriorityBadge,
+  TaskStatusBadge,
+} from '@/components/admin/Badge';
+import { TasksViewToggle } from '@/components/admin/TasksViewToggle';
 import { adminData } from '../lib/adminData';
+import { cn } from '@/lib/utils';
 import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS } from '@/shared/enums';
 
 export const metadata = { title: 'Tasks' };
@@ -69,6 +78,42 @@ function EditTaskTrigger({ record, employees }) {
   return <TaskFormDialog task={record} employees={employees} triggerLabel="Edit" />;
 }
 
+/** The line beneath a task title: how it ended, or what it is about. */
+function titleDetail(task) {
+  if (task.status === 'done') {
+    return task.completedAt
+      ? `Completed ${new Date(task.completedAt).toLocaleDateString('en-GB')}`
+      : 'Completed';
+  }
+  if (task.status === 'cancelled') return 'Cancelled';
+  if (isOverdue(task)) return 'Overdue';
+  return task.description ? task.description.slice(0, 80) : null;
+}
+
+/**
+ * Task title cell.
+ *
+ * A colour-coded bar down the left of the title reads the priority without you
+ * having to find the priority column — the busiest tasks pull the eye first.
+ */
+function TaskTitle({ task }) {
+  const detail = titleDetail(task);
+
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={cn('mt-0.5 h-8 w-1 shrink-0 rounded-sm', TASK_PRIORITY_BAR[task.priority] || 'bg-line')}
+        aria-hidden="true"
+      />
+
+      <div className="min-w-0">
+        <span className="font-medium text-ink">{task.title}</span>
+        {detail ? <span className="mt-0.5 block text-xs text-ink-subtle">{detail}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 const Page = createAdminListPage({
   title: 'Tasks',
   description: 'Internal work items. Never shown on the public website.',
@@ -80,6 +125,7 @@ const Page = createAdminListPage({
   defaultSort: 'createdAt',
   defaultOrder: 'DESC',
   load: loadEmployees,
+  headerActions: <TasksViewToggle view="table" />,
 
   filters: [
     { name: 'status', label: 'All statuses', options: optionsFrom(TASK_STATUS_LABELS) },
@@ -94,24 +140,11 @@ const Page = createAdminListPage({
   },
 
   columns: [
-    {
-      key: 'title',
-      header: 'Task',
-      kind: 'primary',
-      secondary: (record) => {
-        if (record.status === 'done') {
-          return record.completedAt
-            ? `Completed ${new Date(record.completedAt).toLocaleDateString('en-GB')}`
-            : 'Completed';
-        }
-        if (isOverdue(record)) return 'Overdue';
-        return record.description ? record.description.slice(0, 80) : null;
-      },
-    },
-    { key: 'status', header: 'Status', kind: 'status', entityKind: 'generic' },
-    { key: 'priority', header: 'Priority', kind: 'secondary' },
-    { key: (record) => record.dueDate, header: 'Due', kind: 'secondary' },
-    { key: (record) => record.assignee?.name, header: 'Assigned to', kind: 'secondary' },
+    { id: 'title', header: 'Task', render: (task) => <TaskTitle task={task} /> },
+    { id: 'status', header: 'Status', render: (task) => <TaskStatusBadge status={task.status} /> },
+    { id: 'priority', header: 'Priority', render: (task) => <TaskPriorityBadge priority={task.priority} /> },
+    { id: 'due', header: 'Due', render: (task) => <DueCell value={task.dueDate} status={task.status} /> },
+    { id: 'assignee', header: 'Assigned to', render: (task) => <AssigneeChip name={task.assignee?.name} /> },
   ],
 });
 

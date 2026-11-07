@@ -2,6 +2,7 @@ import { Op, literal, fn, col } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
 import { TASK_STATUS } from '../shared/enums.js';
+import { notifyTaskAssigned, notifyTaskStatusChanged } from './notifications.service.js';
 
 const { Task, Employee } = models;
 
@@ -53,6 +54,7 @@ export function toTaskJson(task) {
     updatedAt: task.updatedAt,
     assignee: task.assignee ? { id: task.assignee.id, name: task.assignee.name } : null,
     assigneeId: task.assigneeId,
+    assigneeUserId: task.assigneeUserId ?? null,
     clientId: task.clientId,
     projectId: task.projectId,
     // Names are resolved for display only. Included as ids plus display strings
@@ -219,6 +221,30 @@ export async function myTasks(user) {
   };
 }
 
+/**
+ * Board ordering: urgent first, then soonest deadline (undated last), newest as
+ * the tiebreak. Shared with `myTasks` so the two boards never disagree.
+ */
+const BOARD_ORDER = [
+  [literal("CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END"), 'ASC'],
+  [literal('dueDate IS NULL, dueDate'), 'ASC'],
+  ['createdAt', 'DESC'],
+];
+
+/**
+ * Every task, for the admin board.
+ *
+ * The board columns are statuses, so a board needs the whole set rather than a
+ * page of it. Bounded like `myTasks`: a backlog at agency scale is a working set
+ * of hundreds, not a full history, and the cap keeps one render from streaming
+ * years of finished work.
+ */
+export async function boardTasks() {
+  const tasks = await Task.findAll({ include: LIST_INCLUDE, order: BOARD_ORDER, limit: 500 });
+
+  return { tasks: tasks.map(toTaskJson) };
+}
+
 export async function createTask(payload) {
   await assertEmployee(payload.assigneeId);
 
@@ -236,12 +262,21 @@ export async function createTask(payload) {
   if (task.status === TASK_STATUS.DONE) task.completedAt = new Date();
   await task.save();
 
+  // Awaited so the notification is queued before the request ends; on shared
+  // hosting the process can otherwise be recycled mid-write. The helper never
+  // throws, so a Telegram outage cannot fail the task creation.
+  await notifyTaskAssigned(task);
+
   return getTask(task.id);
 }
 
 export async function updateTask(id, payload) {
   const task = await Task.findByPk(id);
   if (!task) throw AppError.notFound('Task not found');
+
+  const previousStatus = task.status;
+  const previousAssigneeId = task.assigneeId;
+  const previousAssigneeUserId = task.assigneeUserId;
 
   if (payload.assigneeId !== undefined) await assertEmployee(payload.assigneeId);
 
@@ -252,6 +287,17 @@ export async function updateTask(id, payload) {
   if (payload.status !== undefined) applyStatus(task, payload.status);
 
   await task.save();
+
+  // One message per save: a reassignment is not also a status change worth a
+  // second ping. The assignee is preferred over the status when both moved.
+  const assigneeChanged =
+    task.assigneeId !== previousAssigneeId || task.assigneeUserId !== previousAssigneeUserId;
+
+  if (assigneeChanged) {
+    await notifyTaskAssigned(task);
+  } else if (previousStatus !== task.status) {
+    await notifyTaskStatusChanged(task, previousStatus);
+  }
 
   return getTask(id);
 }

@@ -1,8 +1,9 @@
-import { adminData } from '../../lib/adminData';
+import { adminData, getDepartments } from '../../lib/adminData';
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader, AdminPanel, TableWrapper, Th, Td } from '@/components/admin/AdminUI';
 import { UserFormDialog } from '@/components/admin/UserFormDialog';
 import { DeleteButton } from '@/components/admin/DeleteButton';
+import { CreateProfileDialog } from '@/components/admin/CreateProfileDialog';
 import { DateCell, BooleanBadge } from '@/components/admin/Badge';
 
 export const metadata = { title: 'Users & roles' };
@@ -22,13 +23,16 @@ export const metadata = { title: 'Users & roles' };
 export default async function UsersSettingsPage() {
   const session = await requirePermission('user.read');
 
-  const [usersResult, rolesResult, employeesResult] = await Promise.all([
+  const [usersResult, rolesResult, employeesResult, departments] = await Promise.all([
     adminData('/users?pageSize=100'),
     adminData('/roles').catch(() => ({ data: [] })),
     // For the employee-link picker in the user form. A failed lookup yields an
     // empty list rather than breaking the page — the form then offers only
     // "Not linked", which is recoverable.
     adminData('/employees?pageSize=100').catch(() => ({ data: [] })),
+    // For the "Create profile" dialog, which offers only a department choice
+    // beyond the name it already has.
+    getDepartments(),
   ]);
 
   const users = usersResult.data || [];
@@ -37,6 +41,9 @@ export default async function UsersSettingsPage() {
     id: employee.id,
     name: employee.name,
   }));
+
+  const canCreateProfile = session.permissions?.includes('employee.write');
+  const canUploadPhoto = session.permissions?.includes('media.write');
 
   const roleName = (key) => roles.find((role) => role.key === key)?.name || key;
 
@@ -102,6 +109,16 @@ export default async function UsersSettingsPage() {
 
                     <Td align="right">
                       <div className="flex items-center justify-end gap-2">
+                        {/* The reverse of "Create login": give an account that has
+                            no HR profile one, prefilled from this row. */}
+                        {!user.employeeId && canCreateProfile ? (
+                          <CreateProfileDialog
+                            user={user}
+                            departments={departments}
+                            canUpload={canUploadPhoto}
+                          />
+                        ) : null}
+
                         <UserFormDialog user={user} roles={roles} employees={employees} triggerLabel="Edit" />
 
                         {/* The API refuses to delete your own account and refuses to

@@ -68,6 +68,22 @@ const nextConfig = {
     ];
   },
 
+  /**
+   * Stored media is served by the API at `/api/v1/media/<key>`, but rows record
+   * a same-origin public URL (`MEDIA_PUBLIC_URL`, `/media/<key>`). The API is
+   * bound to loopback and has no public address, so the browser must reach it
+   * through this app. Proxying `/media/*` over loopback keeps the site's image
+   * URLs same-origin and working in every environment, and means the deployed
+   * URL never has to change if the API moves.
+   */
+  async rewrites() {
+    const apiBase = (process.env.API_INTERNAL_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
+
+    return [
+      { source: '/media/:path*', destination: `${apiBase}/api/v1/media/:path*` },
+    ];
+  },
+
   async redirects() {
     return [
       { source: '/vira-admin', destination: '/vira-admin/my-tasks', permanent: false },

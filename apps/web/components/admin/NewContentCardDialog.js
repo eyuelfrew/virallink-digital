@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Plus } from 'lucide-react';
 import { CONTENT_STAGE_LABELS, DELIVERABLE_TYPE_LABELS, METRIC_PLATFORM_LABELS } from '@virallink/shared/enums';
 
 /**
@@ -16,7 +17,7 @@ import { CONTENT_STAGE_LABELS, DELIVERABLE_TYPE_LABELS, METRIC_PLATFORM_LABELS }
  * opened by clicking the card, because they are written at different moments by
  * possibly different people.
  */
-export function NewContentCardDialog({ clients = [] }) {
+export function NewContentCardDialog({ clients = [], defaultStage = 'idea', compact = false }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -64,13 +65,25 @@ export function NewContentCardDialog({ clients = [] }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex h-9 items-center rounded-md bg-brand-500 px-3 text-sm font-semibold text-white hover:bg-brand-600"
-      >
-        New card
-      </button>
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title={`New card in ${CONTENT_STAGE_LABELS[defaultStage] || defaultStage}`}
+          aria-label={`New card in ${CONTENT_STAGE_LABELS[defaultStage] || defaultStage}`}
+          className="grid size-6 place-items-center rounded border border-line text-ink-muted transition-colors hover:border-brand-300 hover:bg-surface hover:text-brand-600"
+        >
+          <Plus className="size-3.5" aria-hidden="true" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex h-9 items-center rounded-md bg-brand-500 px-3 text-sm font-semibold text-white hover:bg-brand-600"
+        >
+          New card
+        </button>
+      )}
 
       {open ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center">
@@ -86,6 +99,9 @@ export function NewContentCardDialog({ clients = [] }) {
               <h2 id="new-card-title" className="text-lg font-semibold">
                 New content card
               </h2>
+              <p className="mt-0.5 text-sm text-ink-muted">
+                Starting in {CONTENT_STAGE_LABELS[defaultStage] || 'Idea'}.
+              </p>
             </header>
 
             <form onSubmit={handleSubmit} className="max-h-[72vh] overflow-y-auto">
@@ -157,7 +173,7 @@ export function NewContentCardDialog({ clients = [] }) {
                   <label htmlFor="nc-stage" className="text-sm font-medium text-ink-soft">
                     Starting stage
                   </label>
-                  <select id="nc-stage" name="stage" defaultValue="idea"
+                  <select id="nc-stage" name="stage" defaultValue={defaultStage}
                     className="h-10 rounded-md border border-line bg-surface px-3 text-sm">
                     {Object.entries(CONTENT_STAGE_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>

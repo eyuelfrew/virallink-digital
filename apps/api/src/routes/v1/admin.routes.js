@@ -3,14 +3,16 @@ import { models } from '../../models/index.js';
 import { idFrom, query, v } from '../../middleware/schemas.js';
 import { ADMIN_RESOURCE_PREFIXES } from '../../shared/permissions.js';
 import { AppError } from '../../utils/AppError.js';
+import { ACTIVITY_ACTION, ENTITY } from '../../shared/enums.js';
 import { requireAuth } from '../../services/token.service.js';
 import { requirePermission } from '../../middleware/rbac.js';
+import { logCrud } from '../../middleware/audit.js';
 import * as admin from '../../services/admin.service.js';
 import * as userService from '../../services/user.service.js';
 import * as taskService from '../../services/task.service.js';
 import * as reportService from '../../services/report.service.js';
 import * as pipelineService from '../../services/pipeline.service.js';
-import { getDashboardSummary, getFinanceReport } from '../../services/dashboard.service.js';
+import { getDashboardSummary } from '../../services/dashboard.service.js';
 import { storeImages, deleteMedia } from '../../services/media.service.js';
 import { upload } from '../upload.js';
 
@@ -399,11 +401,6 @@ router.delete('/finance/payments/:id', requirePermission('finance.delete'), v('i
   response.json({ data: result });
 });
 
-router.get('/finance/reports', requirePermission('finance.read'), v('financeReport'), async (request, response) => {
-  const report = await getFinanceReport(query(request));
-  response.json({ data: report });
-});
-
 /* ================================================================== */
 /* Activity log                                                       */
 /* ================================================================== */
@@ -417,6 +414,29 @@ router.get('/activity', requirePermission('activity.read'), v('listActivity'), a
   const userId = request.user.permissions.includes('activity.read') ? request.query.userId : request.user.id;
   const result = await admin.listActivity({ ...query(request), userId });
   response.json({ data: result.rows, meta: result.meta });
+});
+
+/**
+ * DELETE /api/v1/activity?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * Permanently removes audit entries inside a date range. Gated on
+ * `activity.delete`, which ADMIN and SUPER_ADMIN hold.
+ *
+ * The deletion is recorded afterwards, so wiping history leaves a note that it
+ * happened and who did it. Because the entry is written for the current moment,
+ * it falls outside any past range and survives its own sweep.
+ */
+router.delete('/activity', requirePermission('activity.delete'), v('clearActivity'), async (request, response) => {
+  const { from, to } = query(request);
+  const result = await admin.clearActivity({ from, to });
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.ACTIVITY_LOG,
+    metadata: { from: from || null, to: to || null, deleted: result.deleted },
+  });
+
+  response.json({ data: result });
 });
 
 /* ================================================================== */
@@ -621,6 +641,16 @@ router.delete('/users/:id', requirePermission('user.write'), v('idParam'), async
 });
 
 /**
+ * Create the HR profile for an account that has none, and link it. Gated on
+ * `employee.write` because the write is an employee one; the account link is the
+ * consequence, not a separate permission.
+ */
+router.post('/users/:id/employee', requirePermission('employee.write'), v('idParam'), v('createEmployeeForUser'), async (request, response) => {
+  const user = await userService.createEmployeeForUser(idFrom(request), request.body, request);
+  response.status(201).json({ data: user });
+});
+
+/**
  * Role permissions are read-only here. The four system roles and their grants are
  * seeded and referenced by name in code (RBAC tests, the admin nav), so editing
  * them from the UI would let a change silently disable an endpoint nobody was
@@ -642,6 +672,17 @@ router.get('/tasks', requirePermission('task.read'), v('listTasks'), async (requ
 
 router.get('/tasks/summary', requirePermission('task.read'), async (_request, response) => {
   response.json({ data: await taskService.taskSummary() });
+});
+
+/*
+ * Every task in one read, for the board view.
+ *
+ * A board groups by status, so it cannot be fed a single page of a paginated
+ * list without columns silently missing rows. Bounded the same way `/tasks/mine`
+ * is, and declared BEFORE `/tasks/:id` so "board" is not captured as an id.
+ */
+router.get('/tasks/board', requirePermission('task.read'), async (_request, response) => {
+  response.json({ data: await taskService.boardTasks() });
 });
 
 /*
@@ -693,7 +734,14 @@ router.get('/deliverables', requirePermission('client.read'), v('listDeliverable
   response.json({ data: result.rows, meta: result.meta });
 });
 
-router.post('/deliverables', requirePermission('client.write'), v('upsertDeliverable'), async (request, response) => {
+/*
+ * Creation is deliberately open to either permission. The board's "New card"
+ * action posts here, and the production roles (content writers, SEO, copy) hold
+ * content.write but not client.write - requiring client.write alone made the
+ * button visible and every create request 403. Updating/deleting a deliverable
+ * still requires client.write.
+ */
+router.post('/deliverables', requirePermission('client.write', 'content.write'), v('upsertDeliverable'), async (request, response) => {
   const deliverable = await reportService.createDeliverable(request.body);
   response.status(201).json({ data: deliverable });
 });
@@ -749,6 +797,17 @@ router.get('/clients/:id/totals', requirePermission('client.read'), v('idParam')
  * edit a client's contract value. They are different powers and conflating them
  * means either over-granting or a production team that cannot work.
  */
+/*
+ * Client options for the board filter and the "New card" form.
+ *
+ * A content-only role can read the pipeline but not the client directory, so
+ * `/clients` would 403 and leave the board without a client picker. This exposes
+ * exactly what the board needs - id and name - and nothing else.
+ */
+router.get('/content/clients', requirePermission('content.read'), async (_request, response) => {
+  response.json({ data: await pipelineService.getClientOptions() });
+});
+
 router.get('/content/board', requirePermission('content.read'), async (request, response) => {
   const board = await pipelineService.getBoard({
     clientId: request.query.clientId ? Number(request.query.clientId) : undefined,

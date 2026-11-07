@@ -59,6 +59,7 @@ export const PERMISSIONS = Object.freeze({
   // Audit
   ACTIVITY_READ: 'activity.read',
   ACTIVITY_READ_OWN: 'activity.read_own',
+  ACTIVITY_DELETE: 'activity.delete',
 
   // Task management
   TASK_READ: 'task.read',
@@ -111,7 +112,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.ACTIVITY_READ,
     PERMISSIONS.ACTIVITY_READ_OWN,
+    PERMISSIONS.ACTIVITY_DELETE,
   ],
 
   [ROLES.EDITOR]: [
@@ -267,7 +270,7 @@ export const ROLE_LABELS = Object.freeze({
 
 /** Navigation model for the admin sidebar. */
 export const ADMIN_NAV = Object.freeze([
-  { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: null, exact: true },
+  { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: PERMISSIONS.CLIENT_READ, exact: true },
   { label: 'My tasks', href: '/vira-admin/my-tasks', icon: 'ListChecks', permission: null, exact: true },
   {
     label: 'Tasks',
@@ -313,8 +316,16 @@ export const ADMIN_NAV = Object.freeze([
     children: [
       { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
       { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Reports', href: '/vira-admin/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
     ],
+  },
+  {
+    label: 'Account',
+    href: '/vira-admin/account',
+    icon: 'UserRoundCog',
+    // No permission: this is the signed-in person's own profile and notification
+    // settings, which every account holder may manage.
+    permission: null,
+    exact: true,
   },
   {
     label: 'System',

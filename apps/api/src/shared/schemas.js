@@ -670,3 +670,19 @@ export const reorderSchema = z.object({
     .min(1)
     .max(200),
 });
+
+/**
+ * Date range for clearing activity logs.
+ *
+ * Both bounds are optional individually, but at least one is required. Deleting
+ * the audit trail is irreversible, so a request that names no range is refused
+ * rather than silently wiping the whole table.
+ */
+export const clearActivitySchema = z
+  .object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional(),
+  })
+  .refine((value) => Boolean(value.from || value.to), {
+    message: 'Choose a start or end date',
+  });

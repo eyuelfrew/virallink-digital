@@ -18,7 +18,13 @@
    - Radii are restrained. There is no `rounded-full` on containers.
    ========================================================================== */
 
-:root {
+/* `.force-light` shares the light-theme tokens so a subtree can opt out of the
+   active theme. The client report needs this: it is captured to a PNG/PDF on a
+   white background, so it must keep light colours even when the admin is in dark
+   mode — otherwise the tokens flip to near-white and the export is white text on
+   white (the charts stay legible because they carry hard-coded hex). */
+:root,
+.force-light {
   color-scheme: light;
 
   /* Brand blue, extended into a usable ramp. The 500 step is the exact logo
@@ -61,6 +67,25 @@
   --danger-bg: #fdeceb;
   --info: #0b6b8f;
   --info-bg: #e5f3f8;
+
+  /* Stage colours.
+
+     The pipeline has nine stages and the weekly report has to show all of them at
+     once, so a single brand bar per chart cannot tell the reader anything. Each
+     stage gets one hue, chosen to stay legible as a filled bar *and* as text on
+     the light surfaces (all clear 4.5:1 against white), which is why the steps
+     sit at 600/700 rather than the brighter 400/500 used in the dark theme
+     below. Hue, not lightness, carries the identity: the nine are spaced around
+     the wheel so approval and revision never read as the same colour. */
+  --stage-idea: #4f46e5;
+  --stage-brainstorming: #9333ea;
+  --stage-writing: #2563eb;
+  --stage-approval: #b45309;
+  --stage-revision: #be123c;
+  --stage-shooting: #0f766e;
+  --stage-editing: #0369a1;
+  --stage-scheduled: #be185d;
+  --stage-posted: #15803d;
 
   --radius-sm: 4px;
   --radius: 6px;
@@ -116,6 +141,21 @@
   --danger-bg: #2c1210;
   --info: #4db6d8;
   --info-bg: #0a222c;
+
+  /* Stage colours, dark theme.
+
+     Same nine hues, lifted to the lighter step so each one still reads against
+     the near-black surface. Text contrast is what matters here: a filled bar is
+     only ever decorative, but the stage labels beside it are read. */
+  --stage-idea: #818cf8;
+  --stage-brainstorming: #c084fc;
+  --stage-writing: #60a5fa;
+  --stage-approval: #fbbf24;
+  --stage-revision: #fb7185;
+  --stage-shooting: #2dd4bf;
+  --stage-editing: #38bdf8;
+  --stage-scheduled: #f472b6;
+  --stage-posted: #4ade80;
 }
 
 /* The one-shot theme transition. ThemeToggle adds this class before flipping
@@ -173,6 +213,18 @@ html.theme-anim body * {
   --color-danger-bg: var(--danger-bg);
   --color-info: var(--info);
   --color-info-bg: var(--info-bg);
+
+  /* Per-stage hues for the content pipeline. Generated as `bg-stage-idea`,
+     `text-stage-shooting`, `border-stage-posted` and so on. */
+  --color-stage-idea: var(--stage-idea);
+  --color-stage-brainstorming: var(--stage-brainstorming);
+  --color-stage-writing: var(--stage-writing);
+  --color-stage-approval: var(--stage-approval);
+  --color-stage-revision: var(--stage-revision);
+  --color-stage-shooting: var(--stage-shooting);
+  --color-stage-editing: var(--stage-editing);
+  --color-stage-scheduled: var(--stage-scheduled);
+  --color-stage-posted: var(--stage-posted);
 
   --radius-sm: var(--radius-sm);
   --radius: var(--radius);

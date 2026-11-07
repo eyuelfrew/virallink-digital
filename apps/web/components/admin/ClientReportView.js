@@ -78,7 +78,10 @@ export function ClientReportView({ report, monthOptions, currentMonth }) {
       </div>
 
       {/* ---- Everything below here is what gets exported ---- */}
-      <div ref={reportRef} className="flex flex-col gap-4 bg-white p-6">
+      {/* `force-light` pins the light-theme tokens: the report is always drawn on
+          white and exported to PNG/PDF, so it must not inherit dark-mode colours
+          (which would render as near-white text on the white page). */}
+      <div ref={reportRef} className="force-light flex flex-col gap-4 bg-white p-6">
         <header className="border-b border-line pb-4">
           <h2 className="text-2xl font-semibold text-ink">{report.client.name}</h2>
           <p className="mt-1 text-sm text-ink-muted">

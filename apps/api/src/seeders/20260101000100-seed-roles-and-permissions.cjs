@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Seed the RBAC baseline: permissions, the four system roles, and the
+ * Seed the RBAC baseline: permissions, the system roles, and the
  * permission grants defined in packages/shared/permissions.js.
  *
  * This is the only seeder that runs in production. It contains no fake company
@@ -52,7 +52,7 @@ const ROLE_DESCRIPTIONS = {
   [ROLES.SUPER_ADMIN]: 'Unrestricted access, including user and role management.',
   [ROLES.ADMIN]: 'Manages company content, employees, clients and public pages.',
   [ROLES.EDITOR]: 'Manages services, portfolio, blog posts and other public content.',
-  [ROLES.FINANCE]: 'Manages financial records, invoices and financial reports.',
+  [ROLES.FINANCE]: 'Manages financial records, transactions and invoices.',
   [ROLES.SOFTWARE_ENGINEER]: 'Writes, reviews and deploys code. Manages tasks and code reviews.',
   [ROLES.VIDEO_EDITOR]: 'Edits and produces video content. Manages video tasks and assets.',
   [ROLES.DESIGNER]: 'Creates visual designs, graphics and UI/UX mockups.',

@@ -17,6 +17,7 @@ import {
   clearCookieOptions,
 } from '../../services/auth.service.js';
 import { requireAuth, verifyAccessToken } from '../../services/token.service.js';
+import { createLinkCode, linkStatus, unlink } from '../../services/telegram-link.service.js';
 import bcrypt from 'bcrypt';
 import env from '../../config/env.js';
 import { ROLES } from '../../shared/enums.js';
@@ -212,6 +213,38 @@ router.post('/change-password', authenticate, v('changePassword'), async (reques
   clearSessionCookies(response);
 
   response.json({ data: { user: toPublicUser(user), sessionsRevoked: true } });
+});
+
+/**
+ * GET /api/v1/auth/telegram
+ *
+ * The signed-in user's Telegram link state, for the account page.
+ */
+router.get('/telegram', authenticate, async (request, response) => {
+  const user = await models.User.findByPk(request.user.id);
+  if (!user) throw AppError.unauthorized('Your account is no longer available');
+
+  response.json({ data: linkStatus(user) });
+});
+
+/**
+ * POST /api/v1/auth/telegram/link
+ *
+ * Issues a one-time code and the deep link to redeem it. The chat id is learned
+ * from the bot, never supplied by the client.
+ */
+router.post('/telegram/link', authenticate, async (request, response) => {
+  response.json({ data: await createLinkCode(request.user.id) });
+});
+
+/**
+ * DELETE /api/v1/auth/telegram/link
+ *
+ * Detaches Telegram from the account. The mapping is dropped outright; the
+ * outbox history is left alone so the record of what was sent survives.
+ */
+router.delete('/telegram/link', authenticate, async (request, response) => {
+  response.json({ data: await unlink(request.user.id) });
 });
 
 /**

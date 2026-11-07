@@ -57,7 +57,7 @@ CREATE DATABASE virallink CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ### The schema and the roles build themselves
 
 There is nothing to run. The first `npm run dev:api` creates all 41 tables, applies
-the 11 migrations and seeds 44 permissions, 4 roles, 12 financial categories and
+the 14 migrations and seeds 45 permissions, 15 roles, 12 financial categories and
 the company profile — then does nothing on every boot after that.
 
 Both steps are idempotent, which is what makes that safe:

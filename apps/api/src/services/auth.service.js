@@ -13,6 +13,7 @@ import {
   refreshCookieOptions,
   clearCookieOptions,
 } from './token.service.js';
+import { botUsername, isEnabled } from './telegram.service.js';
 import { logAuth } from '../middleware/audit.js';
 
 const { User, Role, Permission, RefreshToken } = models;
@@ -40,6 +41,15 @@ export function toPublicUser(user) {
     // Linked employee record, if any — lets the UI tell a signed-in person
     // whether "My tasks" can work before they click into it.
     employeeId: user.employeeId ?? null,
+    // Telegram link state, so the account page can render without a second call.
+    // The chat id itself is never exposed.
+    telegram: {
+      configured: isEnabled(),
+      botUsername: botUsername(),
+      linked: Boolean(user.telegramChatId),
+      username: user.telegramUsername || null,
+      alertsEnabled: user.telegramAlertsEnabled !== false,
+    },
     roles: user.roles?.map((role) => role.key) || [],
     permissions: [
       ...new Set((user.roles || []).flatMap((role) => role.permissions?.map((p) => p.key) || [])),

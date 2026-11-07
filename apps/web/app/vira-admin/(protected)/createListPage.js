@@ -16,8 +16,8 @@ import { TableWrapper, Th, Td } from '@/components/admin/AdminUI';
  *
  * This factory takes the differences (which columns to show, which permission
  * guards it, what the form looks like) and returns a page. Anything genuinely
- * unusual — the dashboard, finance reports, the company settings form — is written
- * out by hand instead.
+ * unusual — the dashboard, the finance transaction and invoice pages, the company
+ * settings form — is written out by hand instead.
  *
  * Config shape:
  *   {
@@ -77,6 +77,8 @@ export function createAdminListPage(config) {
     itemName = 'record',
     icon,
     form,
+    /** Extra nodes for the page header, rendered before the form trigger. */
+    headerActions,
     /**
      * Optional extra server-side data for the form dialog, e.g. the employee list
      * an assignee picker needs. Called with the search params so it can filter.
@@ -117,7 +119,14 @@ export function createAdminListPage(config) {
         <AdminHeader
           title={title}
           description={description}
-          action={form ? <form.Trigger {...(form.triggerProps ? form.triggerProps(extra) : {})} /> : null}
+          action={
+            form || headerActions ? (
+              <>
+                {headerActions}
+                {form ? <form.Trigger {...(form.triggerProps ? form.triggerProps(extra) : {})} /> : null}
+              </>
+            ) : null
+          }
         />
 
         <AdminPanel dense>
@@ -134,8 +143,8 @@ export function createAdminListPage(config) {
               <TableWrapper>
                 <thead>
                   <tr>
-                    {columns.map((column) => (
-                      <Th key={column.key} align={column.align || 'left'}>
+                    {columns.map((column, index) => (
+                      <Th key={column.id || (typeof column.key === 'string' ? column.key : `col-${index}`)} align={column.align || 'left'}>
                         {column.header}
                       </Th>
                     ))}
@@ -146,21 +155,34 @@ export function createAdminListPage(config) {
                 <tbody>
                   {rows.map((record) => (
                     <tr key={record.id} className="transition-colors hover:bg-surface-muted">
-                      {columns.map((column) => {
+                      {columns.map((column, index) => {
                         const render = KINDS[column.kind || 'text'] || KINDS.text;
                         const secondary =
                           typeof column.secondary === 'function' ? column.secondary(record) : column.secondary;
 
+                        // A column may supply its own `render(record)` for a cell
+                        // the built-in `kinds` cannot express — a colour-coded
+                        // task badge, an assignee avatar. Everything else falls
+                        // through to the shared renderers.
+                        const content =
+                          typeof column.render === 'function'
+                            ? column.render(record)
+                            : render({
+                                record,
+                                value: typeof column.key === 'function' ? column.key(record) : record[column.key],
+                                secondary,
+                                kind: column.entityKind,
+                                href: column.href ? column.href(record) : undefined,
+                                children: column.linkLabel,
+                              });
+
                         return (
-                          <Td key={column.key} align={column.align || 'left'}>
-                            {render({
-                              record,
-                              value: typeof column.key === 'function' ? column.key(record) : record[column.key],
-                              secondary,
-                              kind: column.entityKind,
-                              href: column.href ? column.href(record) : undefined,
-                              children: column.linkLabel,
-                            })}
+                          <Td
+                            key={column.id || (typeof column.key === 'string' ? column.key : `col-${index}`)}
+                            align={column.align || 'left'}
+                            className={column.cellClassName}
+                          >
+                            {content}
                           </Td>
                         );
                       })}

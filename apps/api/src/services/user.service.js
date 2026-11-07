@@ -3,6 +3,9 @@ import { Op } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
 import env from '../config/env.js';
+import { logCrud } from '../middleware/audit.js';
+import { invalidatePublicContent } from './public.service.js';
+import { ACTIVITY_ACTION, ENTITY } from '../shared/enums.js';
 
 const { User, Role, Permission, Employee } = models;
 
@@ -123,18 +126,51 @@ async function roleByKey(key) {
 }
 
 export async function createUser(payload, request) {
-  const existing = await User.findOne({ where: { email: payload.email } });
-  if (existing) throw AppError.conflict('An account with that email already exists');
+  /*
+   * The email is a unique index, and MySQL does not exclude soft-deleted rows
+   * from it — a deleted account keeps its address reserved. The default
+   * (paranoid) scope hides that row, so a plain lookup says "no clash" and the
+   * INSERT then fails on the index, surfacing as an opaque 500. Looking with
+   * `paranoid: false` makes the two cases distinct:
+   *
+   *  - an active account holds the email → a real conflict, refused as before;
+   *  - a deleted account holds it → the address belongs to the same person, so
+   *    the tombstone is revived with the details just entered rather than
+   *    refusing a legitimate re-hire. This matches how the seed script treats a
+   *    soft-deleted row that still holds a unique key.
+   */
+  const existing = await User.findOne({ where: { email: payload.email }, paranoid: false });
+
+  if (existing && !existing.deletedAt) {
+    throw AppError.conflict('An account with that email already exists');
+  }
 
   await assertEmployeeLink(payload.employeeId);
 
-  const user = await User.create({
+  const attributes = {
     name: payload.name,
     email: payload.email,
     passwordHash: await bcrypt.hash(payload.password, env.BCRYPT_ROUNDS),
     isActive: payload.isActive,
     employeeId: payload.employeeId ?? null,
-  });
+  };
+
+  let user;
+
+  if (existing) {
+    await existing.restore();
+    await existing.update(attributes);
+    /*
+     * Restoring revives the old credential too, so bump the token version to
+     * invalidate any session issued to that account before it was deleted, and
+     * overwrite the stale role link below with the one chosen here.
+     */
+    existing.tokenVersion += 1;
+    await existing.save();
+    user = existing;
+  } else {
+    user = await User.create(attributes);
+  }
 
   await user.setRoles([await roleByKey(payload.role)]);
 
@@ -163,7 +199,10 @@ export async function updateUser(id, payload, request) {
 
   if (payload.name !== undefined) user.name = payload.name;
   if (payload.email !== undefined) {
-    const clash = await User.findOne({ where: { email: payload.email, id: { [Op.ne]: id } } });
+    // Include soft-deleted rows: they still hold the unique index, so renaming
+    // to a deleted account's address has to be refused here rather than left to
+    // fail on the database with a 500.
+    const clash = await User.findOne({ where: { email: payload.email, id: { [Op.ne]: id } }, paranoid: false });
     if (clash) throw AppError.conflict('Another account already uses that email');
     user.email = payload.email;
   }
@@ -186,6 +225,40 @@ export async function updateUser(id, payload, request) {
   if (payload.role !== undefined) {
     await user.setRoles([await roleByKey(payload.role)]);
   }
+
+  const fresh = await User.findByPk(id, {
+    include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
+  });
+  return toAdminUser(fresh);
+}
+
+/**
+ * Create the employee profile for an existing sign-in, and link the two.
+ *
+ * The inverse of creating a login from an employee row: here the account already
+ * exists — an owner or administrator who turns out to also be staff — and the HR
+ * profile is what is missing. `payload` is the validated employee shape, so the
+ * write is limited to employee columns; the account link is set here rather than
+ * accepted from the client.
+ */
+export async function createEmployeeForUser(id, payload, request) {
+  const user = await User.findByPk(id);
+  if (!user) throw AppError.notFound('User not found');
+  if (user.employeeId) throw AppError.conflict('This account already has an employee profile');
+
+  const employee = await Employee.create(payload);
+
+  user.employeeId = employee.id;
+  await user.save();
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.CREATE,
+    entity: ENTITY.EMPLOYEE,
+    entityId: employee.id,
+    metadata: { name: employee.name, linkedUserId: user.id },
+  });
+
+  invalidatePublicContent();
 
   const fresh = await User.findByPk(id, {
     include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
