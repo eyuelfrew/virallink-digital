@@ -2,6 +2,7 @@ import { adminData, getDepartments } from '../../lib/adminData';
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader, AdminPanel, TableWrapper, Th, Td } from '@/components/admin/AdminUI';
 import { UserFormDialog } from '@/components/admin/UserFormDialog';
+import { ResetPasswordDialog } from '@/components/admin/ResetPasswordDialog';
 import { DeleteButton } from '@/components/admin/DeleteButton';
 import { CreateProfileDialog } from '@/components/admin/CreateProfileDialog';
 import { DateCell, BooleanBadge } from '@/components/admin/Badge';
@@ -77,7 +78,9 @@ export default async function UsersSettingsPage() {
                   <tr key={user.id} className="transition-colors hover:bg-surface-muted">
                     <Td>
                       <span className="font-medium text-ink">{user.name}</span>
-                      <span className="mt-0.5 block text-xs text-ink-subtle">{user.email}</span>
+                      <span className="mt-0.5 block text-xs text-ink-subtle">
+                        {user.email || user.username || user.phone || '—'}
+                      </span>
                     </Td>
 
                     <Td>
@@ -87,10 +90,24 @@ export default async function UsersSettingsPage() {
                     </Td>
 
                     <Td>
-                      {/* The link that makes "My tasks" work for this person. */}
-                      <span className="text-sm text-ink-soft">
-                        {user.employeeName || <span className="text-ink-subtle">Not linked</span>}
-                      </span>
+                      {/* The job title and department, when this account has an
+                          employee profile. The role column says what the
+                          person may reach; this says what they do. Both are
+                          needed to see whether the two records still agree. */}
+                      {user.employeePosition ? (
+                        <>
+                          <span className="text-sm text-ink-soft">{user.employeePosition}</span>
+                          {user.employeeDepartment ? (
+                            <span className="mt-0.5 block text-xs text-ink-subtle">
+                              {user.employeeDepartment}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : user.employeeName ? (
+                        <span className="text-sm text-ink-soft">{user.employeeName}</span>
+                      ) : (
+                        <span className="text-ink-subtle">Not linked</span>
+                      )}
                     </Td>
 
                     <Td>
@@ -120,6 +137,12 @@ export default async function UsersSettingsPage() {
                         ) : null}
 
                         <UserFormDialog user={user} roles={roles} employees={employees} triggerLabel="Edit" />
+
+                        {/* Issuing a password is a separate action from editing
+                            an account. It signs the person out everywhere, clears
+                            any lockout, and forces them to choose a password of
+                            their own at the next sign-in. */}
+                        <ResetPasswordDialog user={user} />
 
                         {/* The API refuses to delete your own account and refuses to
                             remove the last super administrator. Hiding the button

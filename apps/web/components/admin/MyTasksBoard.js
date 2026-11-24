@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useRef, useCallback, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import {
   TASK_STATUS,
   TASK_STATUS_LABELS,
@@ -34,14 +36,13 @@ import { ListChecks, Play, Eye, AlertTriangle, Check } from 'lucide-react';
  */
 
 /** Statuses that count as unfinished — mirrors OPEN_STATUSES in the API. */
-const OPEN = [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW, TASK_STATUS.BLOCKED];
+const OPEN = [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW];
 
 /** The forward action offered on each status. Reopen covers done and cancelled. */
 const NEXT_ACTION = {
   [TASK_STATUS.TODO]: { label: 'Start', to: TASK_STATUS.IN_PROGRESS },
   [TASK_STATUS.IN_PROGRESS]: { label: 'Send to review', to: TASK_STATUS.REVIEW },
   [TASK_STATUS.REVIEW]: { label: 'Mark done', to: TASK_STATUS.DONE },
-  [TASK_STATUS.BLOCKED]: { label: 'Resume', to: TASK_STATUS.IN_PROGRESS },
   [TASK_STATUS.DONE]: { label: 'Reopen', to: TASK_STATUS.TODO },
   [TASK_STATUS.CANCELLED]: { label: 'Reopen', to: TASK_STATUS.TODO },
 };
@@ -50,8 +51,19 @@ const COLUMNS = [
   TASK_STATUS.TODO,
   TASK_STATUS.IN_PROGRESS,
   TASK_STATUS.REVIEW,
-  TASK_STATUS.BLOCKED,
 ];
+
+/**
+ * How many finished cards the column shows to begin with.
+ *
+ * Ten is enough to show that work is getting finished and few enough that the
+ * column never buries the work that still needs attention. The rest is a
+ * click away.
+ */
+const FINISHED_SHOWN = 10;
+
+/** How many more cards each press of "show more" brings in. */
+const FINISHED_STEP = 10;
 
 const PRIORITY_TONE = {
   urgent: 'bg-red-50 text-red-700',
@@ -85,6 +97,16 @@ export function MyTasksBoard({ initial, canWrite = false }) {
 
   const [tasks, setTasks] = useState(initial?.tasks || []);
   const [error, setError] = useState(null);
+
+  /*
+   * How much of the finished list is on screen.
+   *
+   * The whole finished set is already in memory — it is this person's own
+   * work, which the API returns in one read — so widening the window is a
+   * local matter. The counters still count every finished task, not just the
+   * cards on screen, so the summary tiles do not change as the window moves.
+   */
+  const [finishedShown, setFinishedShown] = useState(FINISHED_SHOWN);
 
   // Set while a save is in flight, so a background refresh cannot clobber an
   // optimistic move with the pre-move server copy.
@@ -124,8 +146,9 @@ export function MyTasksBoard({ initial, canWrite = false }) {
       setError(null);
 
       try {
-        const response = await fetch(`/api/tasks/${task.id}`, {
+        const response = await fetch(browserApiUrl(`/api/tasks/${task.id}`), {
           method: 'PUT',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: toStatus }),
         });
@@ -223,7 +246,7 @@ export function MyTasksBoard({ initial, canWrite = false }) {
           </header>
 
           <div className="flex flex-col gap-2 p-2">
-            {finished.slice(0, 12).map((task) => (
+            {finished.slice(0, finishedShown).map((task) => (
               <TaskCard key={task.id} task={task} canWrite={canWrite} onMove={move} />
             ))}
 
@@ -231,9 +254,33 @@ export function MyTasksBoard({ initial, canWrite = false }) {
               <p className="px-1 py-6 text-center text-xs text-ink-subtle">
                 Completed tasks appear here
               </p>
-            ) : finished.length > 12 ? (
-              <p className="px-1 py-3 text-center text-xs text-ink-subtle">
-                …and {finished.length - 12} more
+            ) : null}
+
+            {/*
+              Ten cards to start with, and a way to see the rest.
+
+              This board already holds the whole finished set in memory — it is
+              the person's own work, which the API returns in one read — so
+              widening the window costs nothing but a click. The admin board
+              has to ask the server for more instead, because it only ever
+              loads a window of everyone's work.
+            */}
+            {finished.length > finishedShown ? (
+              <button
+                type="button"
+                onClick={() => setFinishedShown((current) => current + FINISHED_STEP)}
+                className="rounded px-1 py-2 text-center text-xs font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700"
+              >
+                Show {Math.min(FINISHED_STEP, finished.length - finishedShown)} more
+              </button>
+            ) : null}
+
+            {finished.length > finishedShown ? (
+              <p className="px-1 pb-2 text-center text-xs text-ink-subtle">
+                {finished.length} finished in total ·{' '}
+                <Link href="/vira-admin/tasks" className="underline underline-offset-2 hover:text-ink">
+                  open the list
+                </Link>
               </p>
             ) : null}
           </div>

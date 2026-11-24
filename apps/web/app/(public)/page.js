@@ -15,6 +15,9 @@ import {
   TeamSection,
 } from '@/components/site/home-sections';
 import CameraStudio from '@/components/site/CameraStudio';
+import CompanyMap from '@/components/site/CompanyMap';
+import { Section } from '@/components/site/Section';
+import { hasCoordinates } from '@/lib/map';
 import ScrollStorySection from '@/components/story/ScrollStorySection';
 import {
   StoryHero,
@@ -105,6 +108,13 @@ export default async function HomePage() {
       <CameraStudio />
 
       <TeamSection team={team} />
+
+      {/* No empty band when the admin has not set coordinates. */}
+      {hasCoordinates(company) ? (
+        <Section tone="muted">
+          <CompanyMap company={company} />
+        </Section>
+      ) : null}
     </>
   );
 }

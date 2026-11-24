@@ -68,9 +68,7 @@ export default async function DashboardPage() {
   // what a dashboard row list can show; the board has the rest.
   const openTasks = (myTasks.data?.tasks || [])
     .filter((task) =>
-      [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW, TASK_STATUS.BLOCKED].includes(
-        task.status,
-      ),
+      [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW].includes(task.status),
     )
     .slice(0, 5);
 

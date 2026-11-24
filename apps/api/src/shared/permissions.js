@@ -76,6 +76,12 @@ export const PERMISSIONS = Object.freeze({
   // Content production pipeline
   CONTENT_READ: 'content.read',
   CONTENT_WRITE: 'content.write',
+
+  // Telegram auto-reply
+  TELEGRAM_READ: 'telegram.read',
+  TELEGRAM_WRITE: 'telegram.write',
+  TELEGRAM_MANAGE: 'telegram.manage',
+  NOTIFICATION_WRITE: 'notification.write',
 });
 
 /** First path segment of every admin resource. */
@@ -83,13 +89,13 @@ export const ADMIN_RESOURCE_PREFIXES = Object.freeze([
   'dashboard', 'company', 'employees', 'shareholders', 'clients', 'services',
   'portfolio', 'blog', 'inquiries', 'finance', 'activity', 'media',
   'testimonials', 'stats', 'jobs', 'departments', 'users', 'roles', 'tasks',
-  'deliverables', 'content', 'proposals',
+  'deliverables', 'content', 'proposals', 'telegram-auto-reply', 'notifications', 'notifications',
 ]);
 
 export const ALL_PERMISSIONS = Object.freeze(Object.values(PERMISSIONS));
 
 /**
- * Role → permission map. SUPER_ADMIN holds every permission.
+ * Role ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ permission map. SUPER_ADMIN holds every permission.
  */
 export const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.SUPER_ADMIN]: ALL_PERMISSIONS,
@@ -121,6 +127,10 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.ACTIVITY_READ,
     PERMISSIONS.ACTIVITY_READ_OWN,
     PERMISSIONS.ACTIVITY_DELETE,
+    PERMISSIONS.TELEGRAM_READ,
+    PERMISSIONS.TELEGRAM_WRITE,
+    PERMISSIONS.TELEGRAM_MANAGE,
+    PERMISSIONS.NOTIFICATION_WRITE,
   ],
 
   [ROLES.EDITOR]: [
@@ -193,6 +203,9 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.PROJECT_WRITE,
     PERMISSIONS.CLIENT_READ,
     PERMISSIONS.CLIENT_WRITE,
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.EMPLOYEE_READ,
   ],
 
   [ROLES.CONTENT_WRITER]: [
@@ -274,10 +287,83 @@ export const ROLE_LABELS = Object.freeze({
   [ROLES.MARKETING_COORDINATOR]: 'Marketing Coordinator',
 });
 
+/**
+ * Roles that name a job rather than a level of access.
+ *
+ * `SUPER_ADMIN` and `ADMIN` are levels of access ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â "Super admin" is not a job
+ * title, and putting it on the public team page would be wrong. The rest
+ * describe what the person actually does.
+ */
+export const JOB_ROLE_KEYS = Object.freeze([
+  ROLES.EDITOR,
+  ROLES.FINANCE,
+  ROLES.SOFTWARE_ENGINEER,
+  ROLES.VIDEO_EDITOR,
+  ROLES.DESIGNER,
+  ROLES.PROJECT_MANAGER,
+  ROLES.CONTENT_WRITER,
+  ROLES.SOCIAL_MEDIA_MANAGER,
+  ROLES.GRAPHIC_DESIGNER,
+  ROLES.MOTION_DESIGNER,
+  ROLES.COPYWRITER,
+  ROLES.SEO_SPECIALIST,
+  ROLES.MARKETING_COORDINATOR,
+]);
+
+/**
+ * The job title a role implies.
+ *
+ * An account's role already says what the person does. When that account is
+ * turned into an employee profile, asking the administrator to type the same
+ * thing into a second box is asking them to keep two records in step by hand ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+ * and the two would quietly disagree the first time one of them was edited.
+ *
+ * Returns null for a role that names a level of access rather than a job.
+ */
+export function positionForRole(roleKey) {
+  if (!roleKey || !JOB_ROLE_KEYS.includes(roleKey)) return null;
+  return ROLE_LABELS[roleKey] || null;
+}
+
+/**
+ * The job title implied by whichever of an account's roles names a job.
+ *
+ * An account can hold more than one role, and the first one is not always the
+ * one that describes the work.
+ */
+export function positionForRoles(roleKeys = []) {
+  for (const key of roleKeys) {
+    const position = positionForRole(key);
+    if (position) return position;
+  }
+  return null;
+}
+
+/**
+ * The role a job title implies, when there is an unambiguous match.
+ *
+ * The reverse of `positionForRole`, and deliberately exact: a job title is
+ * free text, so it is matched against the role's own label, ignoring case and
+ * surrounding space. A title that matches nothing returns null rather than a
+ * guess ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â "Head of Everything" is not the Marketing Coordinator role, and
+ * guessing would grant the wrong permissions.
+ */
+export function roleForPosition(position) {
+  const wanted = String(position || '').trim().toLowerCase();
+  if (!wanted) return null;
+
+  for (const key of JOB_ROLE_KEYS) {
+    if (String(ROLE_LABELS[key] || '').trim().toLowerCase() === wanted) return key;
+  }
+
+  return null;
+}
+
 /** Navigation model for the admin sidebar. */
 export const ADMIN_NAV = Object.freeze([
   { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: null, exact: true },
   { label: 'My tasks', href: '/vira-admin/my-tasks', icon: 'ListChecks', permission: null, exact: true },
+  { label: 'My Telegram', href: '/vira-admin/my-telegram', icon: 'Send', permission: null, exact: true },
   {
     label: 'Tasks',
     href: '/vira-admin/tasks',
@@ -333,6 +419,7 @@ export const ADMIN_NAV = Object.freeze([
       { label: 'Media', href: '/vira-admin/settings/media', icon: 'Image', permission: PERMISSIONS.MEDIA_READ },
       { label: 'Users & roles', href: '/vira-admin/settings/users', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
       { label: 'Activity log', href: '/vira-admin/activity', icon: 'History', permission: PERMISSIONS.ACTIVITY_READ },
+      { label: 'Telegram auto-reply', href: '/vira-admin/telegram', icon: 'Send', permission: PERMISSIONS.TELEGRAM_READ },
     ],
   },
 ]);

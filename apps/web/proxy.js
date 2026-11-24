@@ -62,6 +62,13 @@ export const config = {
    * redirects to the dashboard, which the proxy bounces straight back to login.
    * The page's own `getSession()` check already sends a signed-in user onward, so
    * the proxy does not need to see the login route at all.
+   *
+   * `/vira-admin/forgot-password` is excluded for the opposite reason: it has
+   * to work for somebody who cannot sign in, and the gate would send them
+   * straight back to the form they came from.
+   *
+   * `/vira-admin/change-password` is *not* excluded. It needs a session, and
+   * somebody who has been signed out of it should be sent to sign in.
    */
-  matcher: ['/vira-admin/((?!login$).*)'],
+  matcher: ['/vira-admin/((?!login$|forgot-password$).*)'],
 };

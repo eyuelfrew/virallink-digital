@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
+import { browserApiUrl } from '@/lib/config';
 
 /**
  * Delete button with a confirmation dialog.
@@ -17,7 +18,7 @@ export function DeleteButton({ resource, id, label, itemName = 'record', onDelet
   const router = useRouter();
 
   async function handleDelete() {
-    const response = await fetch(`/api/${resource}/${id}`, { method: 'DELETE' });
+    const response = await fetch(browserApiUrl(`/api/${resource}/${id}`), { method: 'DELETE', credentials: 'include' });
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
@@ -73,8 +74,9 @@ export function PublishToggle({ resource, id, published, itemName = 'item' }) {
   const router = useRouter();
 
   async function toggle() {
-    const response = await fetch(`/api/${resource}/${id}/publish`, {
+    const response = await fetch(browserApiUrl(`/api/${resource}/${id}/publish`), {
       method: 'PUT',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isPublished: !published }),
     });

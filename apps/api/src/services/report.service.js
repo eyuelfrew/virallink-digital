@@ -1,7 +1,8 @@
 import { Op, fn, col } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
-import { DELIVERABLE_TYPE, METRIC_PLATFORM } from '../shared/enums.js';
+import { ACTIVITY_ACTION, DELIVERABLE_TYPE, ENTITY, METRIC_PLATFORM } from '../shared/enums.js';
+import { buildDiff, logCrud } from '../middleware/audit.js';
 
 const { Client, ContentDeliverable, ContentMetric, ContentStageEvent } = models;
 
@@ -94,7 +95,12 @@ function sumCounter(rows, field) {
   let measured = false;
 
   for (const row of rows) {
-    const value = Number(row[field]);
+    const raw = row[field];
+    // A null counter is "not measured", not "measured as zero". `Number(null)`
+    // is 0, so the null check has to come before the numeric conversion.
+    if (raw === null || raw === undefined) continue;
+
+    const value = Number(raw);
     if (Number.isFinite(value)) {
       total += value;
       measured = true;
@@ -146,7 +152,7 @@ export async function listDeliverables(query = {}) {
   };
 }
 
-export async function createDeliverable(payload) {
+export async function createDeliverable(payload, request) {
   await assertClient(payload.clientId);
 
   const deliverable = await ContentDeliverable.create({
@@ -190,12 +196,21 @@ export async function createDeliverable(payload) {
     });
   }
 
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.CREATE,
+    entity: ENTITY.DELIVERABLE,
+    entityId: deliverable.id,
+    metadata: { title: deliverable.title, clientId: deliverable.clientId, type: deliverable.type },
+  });
+
   return toDeliverableJson(deliverable);
 }
 
-export async function updateDeliverable(id, payload) {
+export async function updateDeliverable(id, payload, request) {
   const deliverable = await ContentDeliverable.findByPk(id);
   if (!deliverable) throw AppError.notFound('Deliverable not found');
+
+  const before = deliverable.get({ plain: true });
 
   if (payload.clientId !== undefined) {
     await assertClient(payload.clientId);
@@ -212,15 +227,31 @@ export async function updateDeliverable(id, payload) {
     include: [{ model: ContentMetric, as: 'metrics' }],
   });
 
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.UPDATE,
+    entity: ENTITY.DELIVERABLE,
+    entityId: id,
+    metadata: buildDiff(before, deliverable.get({ plain: true })),
+  });
+
   return toDeliverableJson(fresh);
 }
 
-export async function deleteDeliverable(id) {
+export async function deleteDeliverable(id, request) {
   const deliverable = await ContentDeliverable.findByPk(id);
   if (!deliverable) throw AppError.notFound('Deliverable not found');
 
+  const before = { title: deliverable.title, clientId: deliverable.clientId, type: deliverable.type };
+
   // Metrics cascade at the database level, so no orphaned figures survive.
   await deliverable.destroy();
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.DELIVERABLE,
+    entityId: id,
+    metadata: before,
+  });
 
   return { id: Number(id) };
 }
@@ -241,13 +272,23 @@ export async function upsertMetric(payload, request) {
   const deliverable = await ContentDeliverable.findByPk(payload.deliverableId);
   if (!deliverable) throw AppError.notFound('Deliverable not found');
 
+  /*
+   * Look with `paranoid: false`. The unique index on (deliverableId, month,
+   * platform) does not exclude soft-deleted rows, so a metric that was deleted
+   * still holds its slot. The default scope hides that row, the lookup misses,
+   * and the INSERT then fails on the index as an opaque 500. Finding the
+   * tombstone lets the row be revived instead.
+   */
   const existing = await ContentMetric.findOne({
     where: {
       deliverableId: payload.deliverableId,
       month: payload.month,
       platform: payload.platform,
     },
+    paranoid: false,
   });
+
+  if (existing?.deletedAt) await existing.restore();
 
   const fields = {
     views: payload.views ?? null,
@@ -259,12 +300,22 @@ export async function upsertMetric(payload, request) {
   };
 
   if (existing) {
+    const before = existing.get({ plain: true });
+
     // A partial edit should blank only the counters it mentions. `undefined` means
     // "leave alone"; an explicit null from the form means "not measured".
     for (const [key, value] of Object.entries(fields)) {
       if (payload[key] !== undefined) existing[key] = value;
     }
     await existing.save();
+
+    await logCrud(request, {
+      action: ACTIVITY_ACTION.UPDATE,
+      entity: ENTITY.METRIC,
+      entityId: existing.id,
+      metadata: buildDiff(before, existing.get({ plain: true })),
+    });
+
     return { ...toMetricJson(existing), updated: true };
   }
 
@@ -275,7 +326,18 @@ export async function upsertMetric(payload, request) {
     ...fields,
   });
 
-  void request;
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.CREATE,
+    entity: ENTITY.METRIC,
+    entityId: created.id,
+    metadata: {
+      deliverableId: created.deliverableId,
+      month: created.month,
+      platform: created.platform,
+      views: created.views,
+    },
+  });
+
   return { ...toMetricJson(created), updated: false };
 }
 
@@ -294,11 +356,26 @@ function toMetricJson(metric) {
   };
 }
 
-export async function deleteMetric(id) {
+export async function deleteMetric(id, request) {
   const metric = await ContentMetric.findByPk(id);
   if (!metric) throw AppError.notFound('Metric not found');
 
+  const before = {
+    deliverableId: metric.deliverableId,
+    month: metric.month,
+    platform: metric.platform,
+    views: metric.views,
+  };
+
   await metric.destroy();
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.METRIC,
+    entityId: id,
+    metadata: before,
+  });
+
   return { id: Number(id) };
 }
 

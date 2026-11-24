@@ -2,15 +2,16 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { browserApiUrl } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { AlertCircle, LogIn } from 'lucide-react';
 
 /**
  * Login form.
  *
- * Posts to this app's own /api route, which forwards to the API over loopback.
- * The session is set as an httpOnly cookie by the API response, so the access
- * token is never exposed to page JavaScript.
+ * The browser POSTs straight to the API at `PUBLIC_API_URL`. The session is set
+ * as an httpOnly cookie by the API response, so the access token is never
+ * exposed to page JavaScript.
  *
  * Errors are shown verbatim from the API. The API deliberately returns the same
  * message for an unknown email and a wrong password, so nothing here reveals
@@ -19,7 +20,7 @@ import { AlertCircle, LogIn } from 'lucide-react';
 export default function LoginForm({ next = '', hasStaleCookie = false }) {
   const router = useRouter();
 
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('idle'); // idle | submitting
   const [error, setError] = useState('');
@@ -33,16 +34,17 @@ export default function LoginForm({ next = '', hasStaleCookie = false }) {
     setFieldErrors({});
 
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch(browserApiUrl('/api/auth/login'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setFieldErrors(data.details || {});
+        setFieldErrors(data.error?.details || {});
         setError(data.error?.message || 'Sign-in failed. Please try again.');
         setStatus('idle');
         return;
@@ -88,25 +90,25 @@ export default function LoginForm({ next = '', hasStaleCookie = false }) {
       ) : null}
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="email" className="text-sm font-medium text-ink-soft">
-          Email address
+        <label htmlFor="identifier" className="text-sm font-medium text-ink-soft">
+          Email, username or phone
         </label>
         <input
-          id="email"
-          name="email"
-          type="email"
+          id="identifier"
+          name="identifier"
+          type="text"
           required
           autoComplete="username"
           autoFocus
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          aria-invalid={fieldErrors.email ? 'true' : undefined}
-          aria-describedby={fieldErrors.email ? 'email-error' : undefined}
-          className={inputClasses(Boolean(fieldErrors.email))}
+          value={identifier}
+          onChange={(event) => setIdentifier(event.target.value)}
+          aria-invalid={fieldErrors.identifier || fieldErrors.email ? 'true' : undefined}
+          aria-describedby={fieldErrors.identifier || fieldErrors.email ? 'identifier-error' : undefined}
+          className={inputClasses(Boolean(fieldErrors.identifier || fieldErrors.email))}
         />
-        {fieldErrors.email ? (
-          <p id="email-error" className="text-sm text-danger">
-            {fieldErrors.email[0]}
+        {fieldErrors.identifier || fieldErrors.email ? (
+          <p id="identifier-error" className="text-sm text-danger">
+            {(fieldErrors.identifier || fieldErrors.email)[0]}
           </p>
         ) : null}
       </div>
@@ -155,6 +157,13 @@ export default function LoginForm({ next = '', hasStaleCookie = false }) {
           </>
         )}
       </button>
+
+      <a
+        href="/vira-admin/forgot-password"
+        className="text-center text-sm text-ink-muted transition-colors hover:text-ink"
+      >
+        Forgotten your password?
+      </a>
     </form>
   );
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { slugify } from '@virallink/shared/seo';
 
 /**
@@ -95,9 +96,10 @@ export function ServiceFormDialog({ service = null, triggerLabel = 'Add service'
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/services/${service.id}` : '/api/services', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/services/${service.id}` : '/api/services'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -111,6 +113,7 @@ export function ServiceFormDialog({ service = null, triggerLabel = 'Add service'
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

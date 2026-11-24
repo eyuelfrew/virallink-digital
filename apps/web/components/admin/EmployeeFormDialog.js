@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { EMPLOYMENT_STATUS } from '@virallink/shared/enums';
 import { PhotoField } from '@/components/admin/PhotoField';
 
@@ -62,9 +63,10 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/employees/${employee.id}` : '/api/employees', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/employees/${employee.id}` : '/api/employees'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -78,6 +80,7 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
       }
 
       setOpen(false);
+      setPending(false);
       // Re-render the server component so the table reflects the change.
       router.refresh();
     } catch {

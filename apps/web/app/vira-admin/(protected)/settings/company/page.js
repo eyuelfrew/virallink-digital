@@ -38,6 +38,14 @@ export default async function CompanySettingsPage() {
               <Detail label="Email" value={company.email} />
               <Detail label="Website" value={company.website} />
               <Detail label="Address" value={[company.addressLine1, company.city, company.country].filter(Boolean).join(', ')} />
+              <Detail
+                label="Map coordinates"
+                value={
+                  company.latitude != null && company.longitude != null
+                    ? `${company.latitude}, ${company.longitude}`
+                    : 'Not set — no public map is shown'
+                }
+              />
               <Detail label="Hours" value={company.openingHours} />
             </dl>
           </AdminPanel>

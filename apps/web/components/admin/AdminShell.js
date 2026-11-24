@@ -4,9 +4,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ADMIN_NAV } from '@/shared/permissions';
-import { ADMIN_PATH } from '@/lib/config';
+import { ADMIN_PATH, browserApiUrl } from '@/lib/config';
 import {
-  LayoutDashboard, FileStack, Users, Wallet, Settings, Menu, X, LogOut, ChevronDown,
+  LayoutDashboard, FileStack, Users, Wallet, Settings, Menu, MessageSquare, X, LogOut, ChevronDown,
   Briefcase, FolderKanban, Newspaper, Inbox, UserRound, Building2, PieChart,
   ArrowLeftRight, ReceiptText, ChartColumn, Building, Image, ShieldCheck, History,
 } from 'lucide-react';
@@ -46,7 +46,10 @@ export function AdminShell({ session, children }) {
   }).filter(Boolean);
 
   async function signOut() {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    await fetch(browserApiUrl('/api/auth/logout'), {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {});
     router.replace(`${ADMIN_PATH}/login`);
     // Full reload so no cached server component data survives the logout.
     router.refresh();

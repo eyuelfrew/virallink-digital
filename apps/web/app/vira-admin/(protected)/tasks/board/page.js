@@ -1,7 +1,7 @@
 import { requirePermission } from '@/lib/auth';
 import { AdminHeader } from '@/components/admin/AdminUI';
 import { TaskFormDialog } from '@/components/admin/TaskFormDialog';
-import { TasksBoard } from '@/components/admin/TasksBoard';
+import { BOARD_FINISHED_DEFAULT, TasksBoard } from '@/components/admin/TasksBoard';
 import { TasksViewToggle } from '@/components/admin/TasksViewToggle';
 import { adminData } from '../../lib/adminData';
 
@@ -26,10 +26,38 @@ async function loadEmployees() {
   }
 }
 
-export default async function TasksBoardPage() {
+/**
+ * The finished window the board asks for.
+ *
+ * Ten cards by default — enough to show work is getting done, few enough that
+ * the column never buries the work that still needs attention. The board can
+ * ask for a wider window, and the window it is showing lives in the URL, so
+ * "show more" is a link anyone can share and nothing can fall out of step.
+ *
+ * The ceiling matches the API's, so a hand-typed URL cannot ask for more than
+ * one read is willing to send.
+ */
+const FINISHED_MAX = 200;
+
+function clampFinished(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const requested = Number(raw);
+
+  if (!Number.isFinite(requested)) return BOARD_FINISHED_DEFAULT;
+
+  return Math.min(Math.max(Math.floor(requested), 1), FINISHED_MAX);
+}
+
+export default async function TasksBoardPage({ searchParams }) {
   const session = await requirePermission('task.read');
 
-  const [board, employees] = await Promise.all([adminData('/tasks/board'), loadEmployees()]);
+  const params = await searchParams;
+  const finished = clampFinished(params?.finished);
+
+  const [board, employees] = await Promise.all([
+    adminData(`/tasks/board?finished=${finished}`),
+    loadEmployees(),
+  ]);
 
   const permissions = session.permissions || [];
 
@@ -37,7 +65,7 @@ export default async function TasksBoardPage() {
     <>
       <AdminHeader
         title="Tasks"
-        description="Drag a card between columns to move it, or use the menu on the card."
+        description="Drag a card between columns to move it, or use the menu on the card. The finished column shows the ten most recent — ask for more, or open the list for the whole history."
         action={
           <>
             <TasksViewToggle view="board" />
@@ -48,6 +76,8 @@ export default async function TasksBoardPage() {
 
       <TasksBoard
         initial={board.data?.tasks || []}
+        finishedTotal={board.data?.finishedTotal || 0}
+        finishedLimit={finished}
         employees={employees}
         canWrite={permissions.includes('task.write')}
         canDelete={permissions.includes('task.delete')}

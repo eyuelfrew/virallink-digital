@@ -1,8 +1,9 @@
 import { Op, literal, fn, col } from 'sequelize';
 import { models } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
-import { TASK_STATUS } from '../shared/enums.js';
-import { notifyTaskAssigned, notifyTaskStatusChanged } from './notifications.service.js';
+import { ACTIVITY_ACTION, ENTITY, TASK_STATUS } from '../shared/enums.js';
+import { buildDiff, logCrud } from '../middleware/audit.js';
+import { notifyTaskAssigned, notifyTaskStatusChanged, notifyAdminsTaskCompleted } from './notifications.service.js';
 
 const { Task, Employee } = models;
 
@@ -14,7 +15,27 @@ const { Task, Employee } = models;
  */
 
 /** Statuses that count as "not finished". The board's default view. */
-const OPEN_STATUSES = [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW, TASK_STATUS.BLOCKED];
+const OPEN_STATUSES = [TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.REVIEW];
+
+/** Statuses that close a task. Nothing comes after these. */
+const FINISHED_STATUSES = [TASK_STATUS.DONE, TASK_STATUS.CANCELLED];
+
+/**
+ * How many finished tasks the board shows by default.
+ *
+ * The board is for work in flight. Ten finished cards is enough to show that
+ * work is getting finished, and enough to keep the column from burying the
+ * columns that still need attention.
+ */
+const BOARD_FINISHED_LIMIT = 10;
+
+/**
+ * The most the board will return in one read.
+ *
+ * A ceiling on one response, not on what exists. Past this the list view is
+ * the right place to look, because it pages through the history properly.
+ */
+const BOARD_FINISHED_MAX = 200;
 
 /**
  * `completedAt` is derived from the status transition rather than sent by the
@@ -232,20 +253,253 @@ const BOARD_ORDER = [
 ];
 
 /**
- * Every task, for the admin board.
+ * Time windows the performance report can be measured over.
  *
- * The board columns are statuses, so a board needs the whole set rather than a
- * page of it. Bounded like `myTasks`: a backlog at agency scale is a working set
- * of hundreds, not a full history, and the cap keeps one render from streaming
- * years of finished work.
+ * A window is counted from the moment a task was *closed*, not from when it
+ * was created, so "completed this month" means the same thing to everybody.
  */
-export async function boardTasks() {
-  const tasks = await Task.findAll({ include: LIST_INCLUDE, order: BOARD_ORDER, limit: 500 });
+export const PERFORMANCE_PERIODS = Object.freeze({
+  '7d': 7,
+  '30d': 30,
+  '90d': 90,
+  year: 365,
+  all: null,
+});
 
-  return { tasks: tasks.map(toTaskJson) };
+/**
+ * Per-person task performance, measured over a window of time.
+ *
+ * The question this answers is "who is actually getting work finished", so the
+ * unit of measurement is the completion stamp:
+ *
+ *  - `completed` counts tasks whose `completedAt` falls inside the window.
+ *  - `overdue` counts open tasks whose due date has already passed.
+ *  - `avgDaysToComplete` measures `completedAt - createdAt`, so a number near
+ *    zero means work is being closed quickly.
+ *  - `onTimeRate` is the share of completed tasks that were finished on or
+ *    before their due date.
+ *
+ * Everything is derived in SQL rather than by loading rows into memory, so the
+ * report stays cheap as the task history grows.
+ */
+export async function taskPerformance({ period = '30d' } = {}) {
+  const key = String(period);
+  const days = Object.prototype.hasOwnProperty.call(PERFORMANCE_PERIODS, key) ? PERFORMANCE_PERIODS[key] : 30;
+
+  // "All time" has no lower bound; every other window starts `days` ago.
+  const since = days === null ? null : new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  /*
+   * Two grouped queries rather than one with conditional counters.
+   *
+   * The first measures the window: work closed inside it, whether it was
+   * finished on time, and how long it took. The second measures the present
+   * state: everything still open and how much of it is late.
+   *
+   * Splitting them keeps each question in one WHERE clause, which is far easier
+   * to trust than a single pass full of CASE expressions — and it means the
+   * "all time" window is the same query with no lower bound rather than a
+   * different shape of query.
+   */
+  const closedRows = await Task.findAll({
+    attributes: [
+      'assigneeId',
+      [fn('COUNT', col('id')), 'completed'],
+      [
+        fn('COUNT', literal('CASE WHEN due_date IS NOT NULL AND completed_at <= due_date THEN 1 END')),
+        'onTime',
+      ],
+      [
+        fn('COUNT', literal('CASE WHEN due_date IS NOT NULL THEN 1 END')),
+        'withDueDate',
+      ],
+      [fn('AVG', literal('DATEDIFF(completed_at, created_at)')), 'avgDaysToComplete'],
+    ],
+    where: {
+      completedAt: { [Op.ne]: null },
+      ...(since ? { completedAt: { [Op.gte]: since } } : {}),
+    },
+    group: ['assigneeId'],
+    paranoid: true,
+  });
+
+  const openRows = await Task.findAll({
+    attributes: [
+      'assigneeId',
+      [fn('COUNT', col('id')), 'open'],
+      [
+        fn('COUNT', literal('CASE WHEN due_date IS NOT NULL AND due_date < CURDATE() THEN 1 END')),
+        'overdue',
+      ],
+    ],
+    where: { status: { [Op.in]: OPEN_STATUSES } },
+    group: ['assigneeId'],
+    paranoid: true,
+  });
+
+  const staff = await Employee.findAll({
+    attributes: ['id', 'name', 'position', 'employmentStatus', 'departmentId'],
+    include: [{ model: models.Department, as: 'department', attributes: ['id', 'name'], required: false }],
+    paranoid: true,
+  });
+
+  const staffById = new Map(staff.map((employee) => [Number(employee.id), employee]));
+
+  /*
+   * A person with no tasks still belongs on the board: zero completed is
+   * information too, and hiding them would make the report look smaller than
+   * the team is.
+   */
+  const people = [];
+
+  for (const employee of staff) {
+    people.push(buildPerformanceRow(employee, closedRows, openRows));
+  }
+
+  // Work assigned to someone who is no longer on the roster still happened.
+  const seen = new Set(staffById.keys());
+
+  for (const row of closedRows) {
+    const assigneeId = Number(row.get('assigneeId'));
+    if (!assigneeId || seen.has(assigneeId)) continue;
+    seen.add(assigneeId);
+
+    people.push(
+      buildPerformanceRow(
+        { id: assigneeId, name: 'Former team member', position: null, employmentStatus: 'inactive', department: null },
+        closedRows,
+        openRows,
+      ),
+    );
+  }
+
+  const totals = people.reduce(
+    (sum, person) => ({
+      completed: sum.completed + person.completed,
+      open: sum.open + person.open,
+      overdue: sum.overdue + person.overdue,
+      onTimeRateTotal: sum.onTimeRateTotal + (person.onTimeRate ?? 0),
+      rated: sum.rated + (person.onTimeRate === null ? 0 : 1),
+    }),
+    { completed: 0, open: 0, overdue: 0, onTimeRateTotal: 0, rated: 0 },
+  );
+
+  /*
+   * Ranked by completed work, then by turnaround, then by name.
+   *
+   * The tiebreak on name keeps the order stable between renders: two people
+   * with identical numbers would otherwise swap places on every reload, which
+   * makes a leaderboard look broken.
+   */
+  people.sort(
+    (a, b) =>
+      b.completed - a.completed ||
+      (a.avgDaysToComplete ?? Infinity) - (b.avgDaysToComplete ?? Infinity) ||
+      a.name.localeCompare(b.name),
+  );
+
+  return {
+    period: key,
+    days,
+    since: since ? since.toISOString() : null,
+    generatedAt: new Date().toISOString(),
+    totals: {
+      completed: totals.completed,
+      open: totals.open,
+      overdue: totals.overdue,
+      people: people.length,
+      onTimeRate: totals.rated ? Math.round(totals.onTimeRateTotal / totals.rated) : null,
+    },
+    people: people.map((person, index) => ({ ...person, rank: index + 1 })),
+  };
 }
 
-export async function createTask(payload) {
+/** One person's row, with the ratios worked out from the raw counts. */
+function buildPerformanceRow(employee, closedRows, openRows) {
+  const closed = closedRows.find((row) => Number(row.get('assigneeId')) === Number(employee.id));
+  const open = openRows.find((row) => Number(row.get('assigneeId')) === Number(employee.id));
+
+  const get = (row, key) => (row ? Number(row.get(key) || 0) : 0);
+
+  const completed = get(closed, 'completed');
+  const onTime = get(closed, 'onTime');
+  const withDueDate = get(closed, 'withDueDate');
+  const avgDays = closed?.get('avgDaysToComplete');
+
+  return {
+    employeeId: Number(employee.id),
+    name: employee.name,
+    position: employee.position || null,
+    department: employee.department?.name || null,
+    employmentStatus: employee.employmentStatus || null,
+    completed,
+    open: get(open, 'open'),
+    overdue: get(open, 'overdue'),
+    onTimeRate: withDueDate ? Math.round((onTime / withDueDate) * 100) : null,
+    avgDaysToComplete: avgDays === null || avgDays === undefined ? null : Math.round(Number(avgDays) * 10) / 10,
+  };
+}
+
+/**
+ * The board: every open task, and the tail of the finished ones.
+ *
+ * Two queries rather than one over the whole table. Open work is what the
+ * board exists to show, so it is fetched in full — a cap here would hide live
+ * work, which is the one thing that must never happen. Finished work is
+ * history: only the most recent slice comes back, alongside the true total so
+ * the column can say how much more there is without loading it.
+ *
+ * `finishedLimit` asks for a wider window than the default ten. The board
+ * passes it when someone asks to see more, and it is clamped so one request
+ * cannot pull the whole history.
+ *
+ * `finishedTotal` counts every closed task, so the board can report "248
+ * finished" while showing the dozen most recent. The rest is one click away in
+ * the list view, filtered by status.
+ */
+export async function boardTasks({ finishedLimit } = {}) {
+  const requested = Number(finishedLimit);
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.floor(requested), 1), BOARD_FINISHED_MAX)
+    : BOARD_FINISHED_LIMIT;
+
+  const [open, finished, finishedTotal] = await Promise.all([
+    Task.findAll({
+      where: { status: { [Op.in]: OPEN_STATUSES } },
+      include: LIST_INCLUDE,
+      order: BOARD_ORDER,
+      // A generous ceiling on live work, not a way of trimming it.
+      limit: 500,
+      distinct: true,
+      subQuery: false,
+    }),
+    Task.findAll({
+      where: { status: { [Op.in]: FINISHED_STATUSES } },
+      include: LIST_INCLUDE,
+      /*
+       * Most recently closed first. Cancelled tasks carry no completion stamp,
+       * so their creation date breaks the tie and they sort last — which is
+       * right: a task that was cancelled years ago is older than one closed
+       * yesterday.
+       */
+      order: [
+        ['completedAt', 'DESC'],
+        ['createdAt', 'DESC'],
+      ],
+      limit,
+      distinct: true,
+      subQuery: false,
+    }),
+    Task.count({ where: { status: { [Op.in]: FINISHED_STATUSES } } }),
+  ]);
+
+  return {
+    tasks: [...open, ...finished].map(toTaskJson),
+    finishedTotal,
+  };
+}
+
+export async function createTask(payload, request) {
   await assertEmployee(payload.assigneeId);
 
   const task = await Task.create({
@@ -262,17 +516,30 @@ export async function createTask(payload) {
   if (task.status === TASK_STATUS.DONE) task.completedAt = new Date();
   await task.save();
 
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.CREATE,
+    entity: ENTITY.TASK,
+    entityId: task.id,
+    metadata: { title: task.title, status: task.status, priority: task.priority, assigneeId: task.assigneeId },
+  });
+
   // Awaited so the notification is queued before the request ends; on shared
   // hosting the process can otherwise be recycled mid-write. The helper never
   // throws, so a Telegram outage cannot fail the task creation.
   await notifyTaskAssigned(task);
 
+  if (task.status === TASK_STATUS.DONE) {
+    await notifyAdminsTaskCompleted(task, request?.user?.id);
+  }
+
   return getTask(task.id);
 }
 
-export async function updateTask(id, payload) {
+export async function updateTask(id, payload, request) {
   const task = await Task.findByPk(id);
   if (!task) throw AppError.notFound('Task not found');
+
+  const before = task.get({ plain: true });
 
   const previousStatus = task.status;
   const previousAssigneeId = task.assigneeId;
@@ -299,16 +566,38 @@ export async function updateTask(id, payload) {
     await notifyTaskStatusChanged(task, previousStatus);
   }
 
+  // When a task is closed, tell the admins — the oversight notification, separate
+  // from the assignee's own status ping.
+  if (previousStatus !== TASK_STATUS.DONE && task.status === TASK_STATUS.DONE) {
+    await notifyAdminsTaskCompleted(task, request?.user?.id);
+  }
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.UPDATE,
+    entity: ENTITY.TASK,
+    entityId: id,
+    metadata: buildDiff(before, task.get({ plain: true })),
+  });
+
   return getTask(id);
 }
 
-export async function deleteTask(id) {
+export async function deleteTask(id, request) {
   const task = await Task.findByPk(id);
   if (!task) throw AppError.notFound('Task not found');
+
+  const before = task.get({ plain: true });
 
   // Soft delete, matching every other model, so a removed task is recoverable
   // from the activity log rather than gone.
   await task.destroy();
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.TASK,
+    entityId: id,
+    metadata: { title: before.title, status: before.status, priority: before.priority, assigneeId: before.assigneeId },
+  });
 
   return { id: Number(id) };
 }

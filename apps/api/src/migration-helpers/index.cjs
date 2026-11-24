@@ -72,18 +72,41 @@ async function createTable(queryInterface, tableName, attributes, options = {}) 
   );
 }
 
-/** `queryInterface.addIndex` with automatic camelCase -> snake_case conversion. */
+/**
+ * `queryInterface.addIndex` with automatic camelCase -> snake_case conversion.
+ *
+ * Tolerates an index that is already present. MySQL commits DDL implicitly, so a
+ * migration that fails after creating a table and one of its indexes leaves both
+ * behind without a SequelizeMeta row. Re-running would otherwise die on
+ * "Duplicate key name" and the API could never boot again. This mirrors
+ * `addColumn`'s recovery behaviour.
+ */
 async function addIndex(queryInterface, tableName, fields, options = {}) {
-  return queryInterface.addIndex(tableName, toColumnFields(fields), options);
+  try {
+    return await queryInterface.addIndex(tableName, toColumnFields(fields), options);
+  } catch (error) {
+    if (!/duplicate key name|already exists/i.test(error?.message || error?.sqlMessage || '')) throw error;
+  }
 }
 
-/** `queryInterface.addConstraint` with automatic camelCase -> snake_case conversion. */
+/**
+ * `queryInterface.addConstraint` with automatic camelCase -> snake_case conversion.
+ *
+ * Tolerates an already-present constraint for the same partial-migration reason
+ * as `addIndex`.
+ */
 async function addConstraint(queryInterface, tableName, options = {}) {
   const converted = { ...options };
   if (Array.isArray(options.fields)) {
     converted.fields = toColumnFields(options.fields);
   }
-  return queryInterface.addConstraint(tableName, converted);
+  try {
+    return await queryInterface.addConstraint(tableName, converted);
+  } catch (error) {
+    if (!/duplicate foreign key|duplicate key name|already exists/i.test(error?.message || error?.sqlMessage || '')) {
+      throw error;
+    }
+  }
 }
 
 /**

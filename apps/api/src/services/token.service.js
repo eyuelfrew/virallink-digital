@@ -111,6 +111,25 @@ export const ACCESS_COOKIE = 'vl_access';
 export const REFRESH_COOKIE = 'vl_refresh';
 
 /**
+ * A Domain attribute is only useful when the web app and the API share a
+ * registrable domain, as they do on production (virallinkdigital.com and
+ * api.virallinkdigital.com). On localhost the ports differ but the host does
+ * not, so a host-only cookie is both sufficient and the only kind a browser
+ * accepts. A stale production COOKIE_DOMAIN here makes local logins silently
+ * fail: the API returns a cookie that the browser refuses to store.
+ */
+function cookieDomain() {
+  try {
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(new URL(env.SITE_URL).hostname)) {
+      return undefined;
+    }
+  } catch {
+    // env.SITE_URL is validated at startup; fall through to the configured value.
+  }
+  return env.COOKIE_DOMAIN;
+}
+
+/**
  * Cookie attributes.
  *
  * httpOnly keeps the token out of reach of page scripts, so an XSS bug cannot
@@ -119,12 +138,13 @@ export const REFRESH_COOKIE = 'vl_refresh';
  * environment validation.
  */
 function baseCookieOptions(maxAgeSeconds) {
+  const domain = cookieDomain();
   return {
     httpOnly: true,
     secure: env.COOKIE_SECURE,
     sameSite: 'lax',
     path: env.COOKIE_PATH || '/',
-    ...(env.COOKIE_DOMAIN ? { domain: env.COOKIE_DOMAIN } : {}),
+    ...(domain ? { domain } : {}),
     ...(maxAgeSeconds ? { maxAge: maxAgeSeconds * 1000 } : {}),
   };
 }
@@ -181,6 +201,12 @@ export function requireAuth(models) {
         name: user.name,
         email: user.email,
         tokenVersion: user.tokenVersion,
+        /**
+         * True when an administrator set this account's password. The admin
+         * router refuses work while it is set, so the flag has to travel with
+         * the request rather than being re-read by each route.
+         */
+        mustChangePassword: user.mustChangePassword === true,
         // The employee record this account works as, if linked. Services that
         // need "this person's own data" (e.g. My tasks) resolve through it
         // server-side, so the client never chooses an identity to act as.

@@ -30,6 +30,7 @@ function permissionGroup(key) {
   if (key.startsWith('testimonial')) return 'Content';
   if (key.startsWith('job')) return 'Content';
   if (key.startsWith('activity')) return 'System';
+  if (key.startsWith('notification')) return 'Notifications';
   if (key.startsWith('user')) return 'System';
   if (key.startsWith('role')) return 'System';
   if (key.startsWith('company')) return 'Settings';

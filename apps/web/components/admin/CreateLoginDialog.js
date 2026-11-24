@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ROLE_LABELS, roleForPosition } from '@/shared/permissions';
+import { browserApiUrl } from '@/lib/config';
 
 /**
  * Create the sign-in for an existing employee, in one step.
@@ -10,6 +12,13 @@ import { useRouter } from 'next/navigation';
  * never retyped into the user form — the admin only chooses a role and a
  * password. The account is created already linked (`employeeId`), which is what
  * makes "My tasks" and Telegram notifications resolve for this person.
+ *
+ * The role is derived from the employee's job title rather than left to
+ * chance. A profile that says "Motion Designer" and an account that says
+ * "Content editor" is the same person with two different jobs, and nothing
+ * would flag it. The derivation only fires on an exact match against a role's
+ * own name — "Head of Everything" is not the Marketing Coordinator role, and
+ * guessing would hand somebody the wrong permissions.
  *
  * The role list is supplied by the page; if the caller cannot read roles the
  * select is empty, but the endpoint still rejects an unknown role rather than
@@ -21,6 +30,22 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+
+  const roleKeys = roles.map((role) => role.key);
+
+  /*
+   * The role the job title implies, but only if that role can actually be
+   * assigned here. The list of roles is the caller's to grant, and offering a
+   * default the caller cannot grant would produce a rejected request rather
+   * than a sensible one.
+   */
+  const suggestedRole = roleForPosition(employee?.position);
+  const defaultRole =
+    suggestedRole && roleKeys.includes(suggestedRole)
+      ? suggestedRole
+      : roleKeys.includes('EDITOR')
+        ? 'EDITOR'
+        : roleKeys[0] || 'EDITOR';
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -40,8 +65,9 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
     };
 
     try {
-      const response = await fetch('/api/users', {
+      const response = await fetch(browserApiUrl('/api/users'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -56,6 +82,7 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');
@@ -102,6 +129,23 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
                   them appear under &ldquo;My tasks&rdquo;.
                 </p>
 
+                {/* Where the values come from, so the two records are visibly
+                    the same person rather than two guesses. */}
+                <dl className="rounded-md border border-line bg-surface-muted p-3 text-xs">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-subtle">Job title</dt>
+                    <dd className="text-right font-medium text-ink-soft">
+                      {employee.position || <span className="text-ink-subtle">Not set</span>}
+                    </dd>
+                  </div>
+                  <div className="mt-1.5 flex justify-between gap-3">
+                    <dt className="text-ink-subtle">Department</dt>
+                    <dd className="text-right font-medium text-ink-soft">
+                      {employee.department?.name || <span className="text-ink-subtle">Not set</span>}
+                    </dd>
+                  </div>
+                </dl>
+
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="login-name" className="text-sm font-medium text-ink-soft">
                     Full name
@@ -138,7 +182,7 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
                   <select
                     id="login-role"
                     name="role"
-                    defaultValue={roles.some((role) => role.key === 'EDITOR') ? 'EDITOR' : roles[0]?.key || 'EDITOR'}
+                    defaultValue={defaultRole}
                     className="h-10 rounded-md border border-line bg-surface px-3 text-sm"
                   >
                     {roles.map((role) => (
@@ -147,6 +191,11 @@ export function CreateLoginDialog({ employee, roles = [], triggerLabel = 'Create
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-ink-subtle">
+                    {suggestedRole && roleKeys.includes(suggestedRole)
+                      ? `Prefilled from the job title “${employee.position}”. Change it if the access level should differ.`
+                      : 'The access level for this account. The job title does not name one exactly.'}
+                  </p>
                   {fieldErrors.role ? <p className="text-xs text-danger">{fieldErrors.role[0]}</p> : null}
                 </div>
 

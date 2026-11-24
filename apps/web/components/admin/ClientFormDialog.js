@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { CLIENT_STATUS, CLIENT_SOURCE } from '@virallink/shared/enums';
+import { PhotoField } from '@/components/admin/PhotoField';
 
-export function ClientFormDialog({ client = null, triggerLabel = 'Add client' }) {
+export function ClientFormDialog({ client = null, triggerLabel = 'Add client', canUpload = true }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -42,14 +44,18 @@ export function ClientFormDialog({ client = null, triggerLabel = 'Add client' })
       status: formData.get('status'),
       source: formData.get('source') || null,
       notes: formData.get('notes') || undefined,
+      // '' from the field's hidden input means "removed" and is sent as null,
+      // which the API treats as unlink rather than as "leave alone".
+      logoMediaId: formData.get('logoMediaId') ? Number(formData.get('logoMediaId')) : null,
       isPublic: formData.get('isPublic') === 'on',
       contractValue: formData.get('contractValue') || undefined,
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/clients/${client.id}` : '/api/clients', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/clients/${client.id}` : '/api/clients'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -63,6 +69,7 @@ export function ClientFormDialog({ client = null, triggerLabel = 'Add client' })
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');
@@ -124,6 +131,20 @@ export function ClientFormDialog({ client = null, triggerLabel = 'Add client' })
                   <Field name="industry" label="Industry" defaultValue={client?.industry} error={fieldErrors.industry?.[0]} />
                 </div>
 
+                {/* The logo shown on the public clients page. Uploaded straight
+                    away and stored in the media library; removing it just
+                    unlinks the client, the file itself stays in the library. */}
+                <div className="rounded-md border border-line p-4">
+                  <PhotoField
+                    name="logoMediaId"
+                    label="Client logo"
+                    initialMedia={client?.logo || null}
+                    folder="client"
+                    canUpload={canUpload}
+                    hint="Shown on the public clients page. A square or wide logo on a plain background works best."
+                  />
+                </div>
+
                 <div className="grid gap-5 sm:grid-cols-2">
                   <Field name="addressLine1" label="Address" defaultValue={client?.addressLine1} />
                   <Field name="city" label="City" defaultValue={client?.city} />
@@ -173,7 +194,8 @@ export function ClientFormDialog({ client = null, triggerLabel = 'Add client' })
                   <span>
                     <span className="block text-sm font-medium text-ink-soft">Show on the public website</span>
                     <span className="mt-0.5 block text-xs text-ink-muted">
-                      The client name and logo appear on the /clients page. Contact details never do.
+                      The client name and logo appear on the /clients page. Without a logo the
+                      name is shown on its own. Contact details never do.
                     </span>
                   </span>
                 </label>

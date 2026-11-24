@@ -17,12 +17,16 @@
     "migrate:undo": "sequelize-cli db:migrate:undo --config config/sequelize.config.js --migrations-path src/migrations",
     "seed": "sequelize-cli db:seed:all --config config/sequelize.config.js --seeders-path src/seeders",
     "seed:roles": "sequelize-cli db:seed:all --config config/sequelize.config.js --seeders-path src/seeders",
-    "seed:demo": "node src/scripts/seedDemo.js",
+    "db:test:prepare": "node scripts/prepare-test-db.mjs",
     "backup": "node src/scripts/backup.js",
     "create:admin": "node src/scripts/createAdmin.js",
+    "telegram:webhook": "node src/scripts/telegramWebhook.js",
+    "telegram:chatid": "node src/scripts/telegramChatId.js",
+    "telegram:outbox": "node src/scripts/telegramOutbox.js",
+    "push:outbox": "node src/scripts/pushOutbox.js",
     "prune:activity": "node src/scripts/pruneActivity.js",
     "lint": "node --check src/server.js",
-    "test": "node --test test/money.test.js test/isolation.test.js",
+    "test": "node --test test/money.test.js test/isolation.test.js test/update-schemas.test.js test/chat.test.js",
     "test:integration": "node scripts/run-suites.mjs",
     "test:all": "npm run test && npm run test:integration"
   },
@@ -42,12 +46,15 @@
     "mysql2": "3.24.5",
     "nanoid": "5.1.16",
     "pino": "10.3.1",
-    "pino-http": "11.0.0",
+    "qrcode": "^1.5.4",
     "sequelize": "6.37.8",
     "sharp": "0.35.5",
+    "teleproto": "1.232.1",
+    "ws": "^8.23.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "pino-pretty": "^13.2.0",
     "sequelize-cli": "6.6.5"
   }
 }

@@ -315,15 +315,30 @@ async function createRoleUser(email, roleKey, password) {
   const role = await Role.findOne({ where: { key: roleKey } });
   if (!role) throw new Error(`Role ${roleKey} is missing — run "npm run seed" first`);
 
-  const existing = await User.findOne({ where: { email } });
-  const user =
-    existing ||
-    (await User.create({
-      name: `${roleKey} Tester`,
-      email,
-      passwordHash: await bcrypt.hash(password, env.BCRYPT_ROUNDS),
-      isActive: true,
-    }));
+  /*
+   * `paranoid: false` is required, and it matters here.
+   *
+   * A soft-deleted account keeps its row and keeps the unique index on the
+   * email address. The default scope hides that row, so a plain lookup says
+   * "no clash" and the INSERT then fails on the index — surfacing as a
+   * duplicate-key error that has nothing to do with what the suite is testing.
+   *
+   * It is not a hypothetical: deleting a tester from the admin console
+   * soft-deletes it, and the next run of this suite would fail on it.
+   */
+  const existing = await User.findOne({ where: { email }, paranoid: false });
+
+  const user = existing
+    ? await (async () => {
+        if (existing.deletedAt) await existing.restore();
+        return existing;
+      })()
+    : await User.create({
+        name: `${roleKey} Tester`,
+        email,
+        passwordHash: await bcrypt.hash(password, env.BCRYPT_ROUNDS),
+        isActive: true,
+      });
 
   // Re-hash each run so a password change in this file takes effect.
   await user.update({

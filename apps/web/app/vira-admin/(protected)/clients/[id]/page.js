@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { notFound } from 'next/navigation';
 import { adminRecord, adminData } from '../../lib/adminData';
 import { requirePermission } from '@/lib/auth';
@@ -29,7 +30,7 @@ export async function generateMetadata({ params }) {
  * work would otherwise produce an unreadable table.
  */
 export default async function ClientDetailPage({ params, searchParams }) {
-  await requirePermission('client.read');
+  const session = await requirePermission('client.read');
 
   const { id } = await params;
   const query = await searchParams;
@@ -88,7 +89,11 @@ export default async function ClientDetailPage({ params, searchParams }) {
             >
               View report
             </Link>
-            <ClientFormDialog client={client} triggerLabel="Edit profile" />
+            <ClientFormDialog
+              client={client}
+              triggerLabel="Edit profile"
+              canUpload={Boolean(session.permissions?.includes('media.write'))}
+            />
           </div>
         }
       />
@@ -117,6 +122,33 @@ export default async function ClientDetailPage({ params, searchParams }) {
         <div className="grid gap-4 lg:grid-cols-3">
           {/* Profile */}
           <AdminPanel title="Profile" className="lg:col-span-1">
+            {/* The logo, so the person editing the record can see the image that
+                the website will show rather than only its file id. */}
+            <div className="mb-4 flex items-center gap-3">
+              {client.logo?.url ? (
+                <Image
+                  src={client.logo.url}
+                  alt=""
+                  width={56}
+                  height={56}
+                  className="size-14 shrink-0 rounded-md border border-line bg-surface object-contain p-1"
+                />
+              ) : (
+                <span className="flex size-14 shrink-0 items-center justify-center rounded-md border border-line bg-surface-muted text-sm font-bold tracking-tight text-ink-muted">
+                  {monogram(client.name)}
+                </span>
+              )}
+
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-ink">Client logo</p>
+                <p className="mt-0.5 text-xs text-ink-subtle">
+                  {client.logo?.url
+                    ? 'Shown on the public clients page.'
+                    : 'None set — the public page shows the client name instead.'}
+                </p>
+              </div>
+            </div>
+
             <dl className="flex flex-col gap-3 text-sm">
               <Detail label="Status" value={<StatusBadge status={client.status} entityKind="client" />} />
               <Detail label="Contact" value={client.contactPerson} />
@@ -391,4 +423,17 @@ function lastContact(communications) {
 
 function formatMoney(amount) {
   return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(amount);
+}
+
+/** 'Genet Hotel' -> 'GH'. */
+function monogram(name) {
+  const words = String(name || '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) return '?';
+
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }

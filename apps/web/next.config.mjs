@@ -68,24 +68,13 @@ const nextConfig = {
     ];
   },
 
-  /**
-   * Stored media is served by the API at `/api/v1/media/<key>`, but rows record
-   * a same-origin public URL (`MEDIA_PUBLIC_URL`, `/media/<key>`). The API is
-   * bound to loopback and has no public address, so the browser must reach it
-   * through this app. Proxying `/media/*` over loopback keeps the site's image
-   * URLs same-origin and working in every environment, and means the deployed
-   * URL never has to change if the API moves.
-   */
-  async rewrites() {
-    const apiBase = (process.env.API_INTERNAL_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
-
-    return [
-      { source: '/media/:path*', destination: `${apiBase}/api/v1/media/:path*` },
-    ];
-  },
-
   async redirects() {
+    const apiBase = (process.env.NEXT_PUBLIC_API_PUBLIC_URL || 'https://api.virallinkdigital.com').replace(/\/+$/, '');
+
     return [
+      // Stored media rows use the same-origin path `/media/<key>`. Send the
+      // browser straight to the API rather than proxying the file through Next.
+      { source: '/media/:path*', destination: `${apiBase}/api/v1/media/:path*`, permanent: false },
       { source: '/vira-admin', destination: '/vira-admin/my-tasks', permanent: false },
       // Normalise trailing slashes so each page has exactly one canonical URL.
       { source: '/services/:slug/', destination: '/services/:slug', permanent: true },

@@ -97,12 +97,74 @@ export const definitions = {
     },
   },
 
+  PushToken: {
+    tableName: 'push_tokens',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      token: { type: DataTypes.STRING(512), allowNull: false },
+      platform: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'android' },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['token'], name: 'push_tokens_token_unique' },
+        { fields: ['userId'], name: 'push_tokens_user_idx' },
+      ],
+    },
+    /*
+     * Device tokens are not soft-deleted: a revoked token is a deleted row.
+     * There is no "archive" use case for them, and soft delete would only
+     * leave stale rows behind.
+     */
+    paranoid: false,
+  },
+
+  PushOutbox: {
+    tableName: 'push_outbox',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      kind: { type: DataTypes.STRING(60), allowNull: false },
+      payload: { type: DataTypes.JSON, allowNull: false },
+      status: {
+        type: DataTypes.ENUM('pending', 'sent', 'failed'),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      attempts: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      lastError: { type: DataTypes.STRING(250), allowNull: true, defaultValue: null },
+      sentAt: optionalDate(),
+      readAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['status', 'createdAt'], name: 'push_outbox_status_created_idx' },
+        { fields: ['userId', 'readAt'], name: 'push_outbox_user_read_idx' },
+      ],
+    },
+    /*
+     * Outbox rows are hard-deleted once delivered (or after exhausting
+     * retries) by the drain; there is no archive use case for them.
+     */
+    paranoid: false,
+  },
+
   User: {
     tableName: 'users',
     fields: {
       id: pk(),
       name: { type: DataTypes.STRING(120), allowNull: false },
-      email: { type: DataTypes.STRING(191), allowNull: false, unique: true },
+      /*
+       * Any one of email, username or phone is enough to sign in. All three
+       * are nullable and unique where set, so an account can be reached by
+       * whichever handle its holder prefers — an email for an administrator, a
+       * username (Telegram-style) or a phone number for an employee who never
+       * wanted an email address. MySQL treats NULL as distinct in a unique
+       * index, so many accounts can share "no email".
+       */
+      email: { type: DataTypes.STRING(191), allowNull: true, unique: true },
+      username: { type: DataTypes.STRING(64), allowNull: true, unique: true },
+      phone: { type: DataTypes.STRING(60), allowNull: true, unique: true },
       /** bcrypt digest only. Plaintext passwords are never persisted. */
       passwordHash: { type: DataTypes.STRING(120), allowNull: false },
       isActive: booleanDefault(true),
@@ -139,16 +201,171 @@ export const definitions = {
       telegramLinkCodeExpiresAt: optionalDate(),
       /** Per-person opt-out; linking does not force notifications on someone. */
       telegramAlertsEnabled: booleanDefault(true),
+      /**
+       * Set when an administrator sets a password on somebody's behalf. The
+       * account can sign in, but the console is refused until the holder
+       * chooses a password of their own.
+       */
+      mustChangePassword: booleanDefault(false),
     },
     options: {
       indexes: [
         { fields: ['email'] },
+        { fields: ['username'] },
+        { fields: ['phone'] },
         { fields: ['isActive'] },
         { fields: ['employeeId'] },
         { unique: true, fields: ['telegramChatId'], name: 'users_telegram_chat_id_unique' },
+        { unique: true, fields: ['username'], name: 'users_username_unique' },
+        { unique: true, fields: ['phone'], name: 'users_phone_unique' },
       ],
     },
     paranoid: true,
+  },
+
+  /* ================================================================== */
+  /* User chat                                                            */
+  /* ================================================================== */
+
+  Conversation: {
+    tableName: 'conversations',
+    fields: {
+      id: pk(),
+      /** False = private 1:1 chat; True = multi-person group. */
+      isGroup: booleanDefault(false),
+      /** Group title. Null for private chats — the pair name is derived at read time. */
+      title: shortText(),
+      /** The person who started the chat. Context only; membership is the members table. */
+      creatorId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Newest message activity so far. Drives the unread badge ordering. */
+      lastMessageAt: optionalDate(),
+      /** When the conversation was pinned by a member; null when not pinned. */
+      pinnedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['isGroup'] },
+        { fields: ['lastMessageAt'], name: 'conversations_last_message_at_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  ConversationMember: {
+    tableName: 'conversation_members',
+    fields: {
+      id: pk(),
+      conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      isMuted: booleanDefault(false),
+      /**
+       * Highest message id this member has consumed. NULL means "nothing read
+       * yet", so a brand-new conversation is unread until you open it.
+       */
+      lastReadMessageId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['conversationId', 'userId'], name: 'conversation_members_pair_unique' },
+        { fields: ['userId'], name: 'conversation_members_user_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  Message: {
+    tableName: 'messages',
+    fields: {
+      id: pk(),
+      conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      text: longText(),
+      /** The message being replied to; null on the first of a thread. */
+      replyToId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Optional image attached to the message. */
+      imageMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Set when the sender edits their own text. */
+      editedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['conversationId', 'createdAt'], name: 'messages_conversation_created_idx' },
+        { fields: ['userId'], name: 'messages_user_idx' },
+        { fields: ['imageMediaId'], name: 'messages_image_media_id_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  MessageReaction: {
+    tableName: 'message_reactions',
+    fields: {
+      id: pk(),
+      messageId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      emoji: { type: DataTypes.STRING(40), allowNull: false },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['messageId', 'userId', 'emoji'], name: 'message_reactions_message_user_emoji_unique' },
+        { fields: ['messageId'], name: 'message_reactions_message_idx' },
+        { fields: ['userId'], name: 'message_reactions_user_idx' },
+      ],
+    },
+    paranoid: false,
+  },
+
+  /**
+   * Password reset tokens.
+   *
+   * One row per reset request. The code itself is never stored — only a
+   * SHA-256 digest of `userId:code` — so a copy of the database does not hand
+   * an attacker a set of working reset codes.
+   *
+   * Rows are consumed rather than deleted, so a spent code stays visible as
+   * evidence that it was used, and a replay can be told apart from a first
+   * attempt.
+   */
+  PasswordResetToken: {
+    tableName: 'password_reset_tokens',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /**
+       * sha256(`${userId}:${code}`) — never the code itself.
+       *
+       * Nullable: when the code comes back through a Telegram link rather
+       * than straight to a linked chat, it does not exist until the link is
+       * opened, because a digest cannot be turned back into the six digits
+       * the bot has to send.
+       */
+      codeHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      /** When the code — or the link that carries it — stops working. */
+      expiresAt: { type: DataTypes.DATE, allowNull: false },
+      /** How many wrong guesses have been charged against this code. */
+      attempts: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      /** Set when the code is redeemed, or when it runs out of attempts. */
+      consumedAt: optionalDate(),
+      /**
+       * The one-time secret carried in the `t.me` deep link, hashed. It is
+       * what lets somebody who has not linked Telegram yet receive a code:
+       * opening the link starts the bot, and the bot replies with it.
+       */
+      deliveryTokenHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      /** When the link was first opened. */
+      deliveredAt: optionalDate(),
+      /** The chat the code was delivered to. */
+      deliveryChatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      /** Where the request came from, for the security log. */
+      ip: { type: DataTypes.STRING(45), allowNull: true, defaultValue: null },
+    },
+    options: {
+      indexes: [
+        { fields: ['userId', 'createdAt'] },
+        { fields: ['userId'] },
+        { fields: ['deliveryTokenHash'] },
+      ],
+    },
   },
 
   /**
@@ -1071,6 +1288,222 @@ export const definitions = {
         { fields: ['userId'] },
         { fields: ['action'] },
         { fields: ['createdAt'] },
+      ],
+    },
+  },
+
+  TelegramUserAccount: {
+    tableName: 'telegram_user_accounts',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, unique: true },
+      apiId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+      /** AES-256-GCM encrypted; never sent to the browser. */
+      apiHash: longText(),
+      phoneNumber: longText(),
+      sessionString: longText(),
+      telegramUserId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      accountFirstName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountLastName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      status: {
+        type: DataTypes.ENUM('disconnected', 'code_sent', 'password_required', 'connected', 'error'),
+        allowNull: false,
+        defaultValue: 'disconnected',
+      },
+      lastError: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      lastConnectedAt: optionalDate(),
+    },
+    options: {
+      indexes: [{ unique: true, fields: ['userId'], name: 'telegram_user_accounts_user_unique' }],
+    },
+  },
+
+  TelegramAutoReplyAccount: {
+    tableName: 'telegram_auto_reply_accounts',
+    fields: {
+      id: pk(),
+      ownerUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Set when provider = 'account'; the owner's MTProto credential row. */
+      userAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      name: { type: DataTypes.STRING(120), allowNull: false },
+      provider: { type: DataTypes.ENUM('env', 'custom', 'account'), allowNull: false, defaultValue: 'custom' },
+      telegramBotId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      telegramUserId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      botUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      accountFirstName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountLastName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      botToken: longText(),
+      webhookSecret: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      isCompany: booleanDefault(false),
+      isActive: booleanDefault(true),
+      webhookStatus: {
+        type: DataTypes.ENUM('pending', 'active', 'error'),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      connectionStatus: {
+        type: DataTypes.ENUM('new', 'code_sent', 'password_required', 'connected', 'disconnected', 'error'),
+        allowNull: false,
+        defaultValue: 'new',
+      },
+      lastError: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      lastSyncedAt: optionalDate(),
+      lastLoginAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['ownerUserId'] },
+        { fields: ['provider'] },
+        { unique: true, fields: ['telegramBotId'], name: 'telegram_auto_reply_accounts_bot_id_unique' },
+        { unique: true, fields: ['userAccountId'], name: 'telegram_auto_reply_accounts_user_account_unique' },
+        { fields: ['isCompany'] },
+      ],
+    },
+  },
+
+  TelegramAutoReplyRule: {
+    tableName: 'telegram_auto_reply_rules',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      name: { type: DataTypes.STRING(120), allowNull: false },
+      trigger: {
+        type: DataTypes.ENUM('any', 'new_chat', 'returning_chat', 'keyword', 'exact', 'regex'),
+        allowNull: false,
+        defaultValue: 'keyword',
+      },
+      keywords: longText(),
+      replyText: longText(),
+      sendCatalog: booleanDefault(false),
+      /** Ordered media ids sent as a photo album after the reply text. */
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      /** The single audio file sent after the reply text — a voice note or a sound bite. */
+      audioMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Re-attach the interactive menu keyboard after this rule's reply. */
+      showMenu: booleanDefault(false),
+      cooldownMinutes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      priority: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      stopProcessing: booleanDefault(true),
+      isActive: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { fields: ['accountId', 'isActive', 'priority'], name: 'telegram_rules_account_active_priority_idx' },
+      ],
+    },
+  },
+
+  TelegramAutoReplySettings: {
+    tableName: 'telegram_auto_reply_settings',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, unique: true },
+      isEnabled: booleanDefault(true),
+      welcomeMessage: longText(),
+      awayMessage: longText(),
+      awayMode: booleanDefault(true),
+      awayCooldownMinutes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 360 },
+      catalogEnabled: booleanDefault(true),
+      catalogIntro: longText(),
+      menuEnabled: booleanDefault(false),
+      menuTitle: { type: DataTypes.STRING(300), allowNull: true, defaultValue: null },
+      replyToNewChats: booleanDefault(true),
+      replyToReturningChats: booleanDefault(true),
+    },
+    options: { indexes: [{ unique: true, fields: ['accountId'], name: 'telegram_auto_reply_settings_account_unique' }] },
+  },
+
+  TelegramCatalogItem: {
+    tableName: 'telegram_catalog_items',
+    fields: {
+      id: pk(),
+      name: { type: DataTypes.STRING(191), allowNull: false },
+      description: longText(),
+      price: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: null },
+      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'ETB' },
+      imageMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Extra ordered media ids; sent as a photo album instead of a single photo. */
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      isActive: booleanDefault(true),
+      displayOrder: orderIndex(),
+    },
+    options: {
+      indexes: [
+        { fields: ['isActive', 'displayOrder'] },
+        { fields: ['imageMediaId'] },
+      ],
+    },
+  },
+
+  /**
+   * Per-chat state for the auto-reply.
+   *
+   * This is deliberately not a conversation. Nothing that a client wrote is
+   * kept: no message text, no name, no username, no title, no counters, no
+   * history. What remains is the little the auto-reply needs to behave
+   * itself:
+   *
+   *   - `lastAwayReplyAt` — when this chat last got the away message, which is
+   *     what the cooldown is measured from;
+   *   - `lastRuleId` / `lastRuleReplyAt` — the same for a reply rule's own
+   *     cooldown;
+   *   - `lastReplyAt` — the floor between two replies;
+   *   - `isBlocked` / `autoReplyEnabled` — the per-chat switches;
+   *   - `lastTelegramMessageId` — a sequence number, not content, kept so a
+   *     retried webhook is not answered twice.
+   *
+   * One row per chat, indexed on (account, chat). A studio with a hundred
+   * thousand clients still holds a hundred thousand small rows and nothing
+   * readable about any of them.
+   */
+  TelegramAutoReplyChatState: {
+    tableName: 'telegram_auto_reply_chat_state',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      chatId: { type: DataTypes.BIGINT, allowNull: false },
+      /** The last Telegram message id seen, so a retried update is ignored. */
+      lastTelegramMessageId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      lastReplyAt: optionalDate(),
+      lastAwayReplyAt: optionalDate(),
+      lastRuleId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      lastRuleReplyAt: optionalDate(),
+      isBlocked: booleanDefault(false),
+      autoReplyEnabled: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['accountId', 'chatId'], name: 'telegram_chat_state_account_chat_unique' },
+        { fields: ['accountId', 'isBlocked'] },
+      ],
+    },
+  },
+
+  TelegramMenuButton: {
+    tableName: 'telegram_menu_buttons',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /** Null = top-level button; set = button inside a submenu. */
+      parentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      label: { type: DataTypes.STRING(64), allowNull: false },
+      action: {
+        type: DataTypes.ENUM('catalog', 'text', 'album', 'url', 'submenu', 'menu'),
+        allowNull: false,
+        defaultValue: 'text',
+      },
+      replyText: longText(),
+      url: { type: DataTypes.STRING(2048), allowNull: true, defaultValue: null },
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      displayOrder: orderIndex(),
+      isActive: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { fields: ['accountId', 'isActive', 'displayOrder'], name: 'telegram_menu_buttons_account_order_idx' },
+        { fields: ['parentId'] },
       ],
     },
   },

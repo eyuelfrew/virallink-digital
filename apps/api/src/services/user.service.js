@@ -5,9 +5,12 @@ import { AppError } from '../utils/AppError.js';
 import env from '../config/env.js';
 import { logCrud } from '../middleware/audit.js';
 import { invalidatePublicContent } from './public.service.js';
+import { applyNewPassword, resetPassword } from './auth.service.js';
+import { positionForRoles } from '../shared/permissions.js';
+import { generateTemporaryPassword } from '../utils/password.js';
 import { ACTIVITY_ACTION, ENTITY } from '../shared/enums.js';
 
-const { User, Role, Permission, Employee } = models;
+const { User, Role, Permission, Employee, Department, PasswordResetToken } = models;
 
 /**
  * User and role administration.
@@ -32,15 +35,25 @@ export function toAdminUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    username: user.username ?? null,
+    phone: user.phone ?? null,
     isActive: user.isActive,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
     lockedUntil: user.lockedUntil,
+    /** True when the account still owes the holder a password of their own. */
+    mustChangePassword: user.mustChangePassword === true,
     roles: (user.roles || []).map((role) => role.key),
     // The employee this sign-in is linked to. The name is display-only, resolved
     // for the users table so it need not be fetched again per row.
     employeeId: user.employeeId ?? null,
     employeeName: user.employee?.name ?? null,
+    // The job title and department, so the users table can show the person's
+    // actual job without a second lookup. An account's role says what they may
+    // reach; this says what they do. Showing only one of the two is how the
+    // two records drift apart without anybody noticing.
+    employeePosition: user.employee?.position ?? null,
+    employeeDepartment: user.employee?.department?.name ?? null,
   };
 }
 
@@ -54,8 +67,22 @@ async function assertEmployeeLink(employeeId) {
   if (!employee) throw AppError.badRequest('That employee profile does not exist');
 }
 
-/** Include config so list/create/update responses can show the linked name. */
-const EMPLOYEE_INCLUDE = [{ model: Employee, as: 'employee', attributes: ['id', 'name'], required: false }];
+/**
+ * Include config so list/create/update responses can show the linked name.
+ *
+ * The employee's job title and department come along too. They are one row of
+ * the same join either way, and the users table needs them to show what the
+ * person does next to what they may reach.
+ */
+const EMPLOYEE_INCLUDE = [
+  {
+    model: Employee,
+    as: 'employee',
+    attributes: ['id', 'name', 'position'],
+    required: false,
+    include: [{ model: Department, as: 'department', attributes: ['id', 'name'], required: false }],
+  },
+];
 
 /** Count active super administrators. */
 async function activeSuperAdminCount(excludingUserId = null) {
@@ -139,17 +166,45 @@ export async function createUser(payload, request) {
    *    refusing a legitimate re-hire. This matches how the seed script treats a
    *    soft-deleted row that still holds a unique key.
    */
-  const existing = await User.findOne({ where: { email: payload.email }, paranoid: false });
+  /*
+   * At least one sign-in handle is needed. An account with none of email,
+   * username or phone could never be reached, so it would be a dead row.
+   */
+  const hasHandle = payload.email || payload.username || payload.phone;
+  if (!hasHandle) {
+    throw AppError.badRequest('An account needs at least one of email, username or phone');
+  }
+
+  /*
+   * Each handle is unique. A soft-deleted row still holds its value, so the
+   * lookup uses paranoid: false — the same treatment email gets, so a
+   * re-hire can revive an old account instead of being refused.
+   */
+  /*
+   * Each handle is unique. A soft-deleted row still holds its value, so the
+   * lookup uses paranoid: false — the same treatment email gets, so a re-hire
+   * can revive an old account instead of being refused.
+   */
+  const handleConditions = [];
+  if (payload.email) handleConditions.push({ email: payload.email });
+  if (payload.username) handleConditions.push({ username: payload.username });
+  if (payload.phone) handleConditions.push({ phone: payload.phone });
+
+  const existing = handleConditions.length
+    ? await User.findOne({ where: { [Op.or]: handleConditions }, paranoid: false })
+    : null;
 
   if (existing && !existing.deletedAt) {
-    throw AppError.conflict('An account with that email already exists');
+    throw AppError.conflict('An account with one of those handles already exists');
   }
 
   await assertEmployeeLink(payload.employeeId);
 
   const attributes = {
     name: payload.name,
-    email: payload.email,
+    email: payload.email ?? null,
+    username: payload.username ?? null,
+    phone: payload.phone ?? null,
     passwordHash: await bcrypt.hash(payload.password, env.BCRYPT_ROUNDS),
     isActive: payload.isActive,
     employeeId: payload.employeeId ?? null,
@@ -177,7 +232,14 @@ export async function createUser(payload, request) {
   const fresh = await User.findByPk(user.id, {
     include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
   });
-  void request;
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.CREATE,
+    entity: ENTITY.USER,
+    entityId: fresh.id,
+    metadata: { name: fresh.name, email: fresh.email, role: payload.role, isActive: fresh.isActive },
+  });
+
   return toAdminUser(fresh);
 }
 
@@ -197,7 +259,29 @@ export async function updateUser(id, payload, request) {
     if (removingSuperAdmin) throw AppError.conflict('You cannot remove your own super administrator role');
   }
 
+  // The name before the change, so the linked profile can be told apart from
+  // a rename rather than being rewritten on every save.
+  const previousName = user.name;
+
   if (payload.name !== undefined) user.name = payload.name;
+
+  /*
+   * Keep the linked employee profile's name in step.
+   *
+   * The mirror of the same rule in `updateEmployee`. A linked account and its
+   * employee profile are one person recorded twice, and the profile's name is
+   * the one the public team page shows — so renaming the account and leaving
+   * the profile alone would leave the website showing the old name.
+   *
+   * Skipped when the request also changes the link, because the profile being
+   * renamed is then not the one this account is moving to.
+   */
+  const relinking = payload.employeeId !== undefined && payload.employeeId !== user.employeeId;
+
+  if (!relinking && payload.name !== undefined && payload.name !== previousName && user.employeeId) {
+    const linked = await Employee.findByPk(user.employeeId, { attributes: ['id'] });
+    if (linked) await linked.update({ name: payload.name });
+  }
   if (payload.email !== undefined) {
     // Include soft-deleted rows: they still hold the unique index, so renaming
     // to a deleted account's address has to be refused here rather than left to
@@ -206,13 +290,47 @@ export async function updateUser(id, payload, request) {
     if (clash) throw AppError.conflict('Another account already uses that email');
     user.email = payload.email;
   }
-  if (payload.password) {
-    user.passwordHash = await bcrypt.hash(payload.password, env.BCRYPT_ROUNDS);
-    // Invalidate every existing session for this account.
-    user.tokenVersion += 1;
-    user.passwordChangedAt = new Date();
+  if (payload.username !== undefined) {
+    const clash = await User.findOne({ where: { username: payload.username, id: { [Op.ne]: id } }, paranoid: false });
+    if (clash) throw AppError.conflict('Another account already uses that username');
+    user.username = payload.username;
+  }
+  if (payload.phone !== undefined) {
+    const clash = await User.findOne({ where: { phone: payload.phone, id: { [Op.ne]: id } }, paranoid: false });
+    if (clash) throw AppError.conflict('Another account already uses that phone number');
+    user.phone = payload.phone;
   }
   if (payload.isActive !== undefined) user.isActive = payload.isActive;
+  if (payload.telegramUsername !== undefined) {
+    /*
+     * The person's Telegram username, registered by an administrator.
+     *
+     * This is the trust anchor for password recovery over Telegram. A bot
+     * cannot message a chat that has never spoken to it, so somebody who has
+     * not linked Telegram yet can only be reached through a link — and the
+     * bot sends a working code only to a chat whose `@username` matches the
+     * one recorded here. An administrator registers it once, having seen the
+     * person's Telegram.
+     *
+     * Storing it without the `@`, because that is how Telegram reports it and
+     * how it is compared.
+     */
+    const username = String(payload.telegramUsername).trim().replace(/^@/, '');
+    user.telegramUsername = username || null;
+  }
+  if (payload.telegramChatId !== undefined) {
+    /*
+     * The chat the bot delivers to.
+     *
+     * Setting this is what lets a password-reset code be delivered to somebody
+     * who cannot sign in — a bot cannot message a chat it has never heard
+     * from, so an account with no chat id cannot be reached at all until it
+     * has one. On a machine with no public address for the API, an
+     * administrator can read the chat id out of Telegram's own queue and set
+     * it here.
+     */
+    user.telegramChatId = payload.telegramChatId;
+  }
   if (payload.employeeId !== undefined) {
     // `null` unlinks, a number links, `undefined` (absent) leaves it alone —
     // assertEmployeeLink accepts all three, validating only the link case.
@@ -220,7 +338,32 @@ export async function updateUser(id, payload, request) {
     user.employeeId = payload.employeeId;
   }
 
+  const previousRole = user.roles.map((role) => role.key).join(', ');
+  const previousIsActive = user.isActive;
+
   await user.save();
+
+  /*
+   * A password change is applied after the rest of the save, and through the
+   * shared helper rather than by setting the hash inline.
+   *
+   * Two reasons, and the first one was a real bug. The old code set the hash
+   * and bumped the token version here but never cleared `lockedUntil` — and
+   * the lockout is checked *before* the password is compared, so an
+   * administrator resetting a colleague's password could not unblock an
+   * account that was locked out after too many failed attempts. The reset
+   * appeared to do nothing.
+   *
+   * The second is that applying it here keeps one implementation of "the
+   * password changed": hash it, bump the token version, revoke every session,
+   * clear the lockout. The self-service change and the Telegram reset do the
+   * same four things, and they should not be able to drift apart.
+   */
+  if (payload.password) {
+    await applyNewPassword(user, payload.password, {
+      mustChangePassword: payload.mustChangePassword === true,
+    });
+  }
 
   if (payload.role !== undefined) {
     await user.setRoles([await roleByKey(payload.role)]);
@@ -229,7 +372,84 @@ export async function updateUser(id, payload, request) {
   const fresh = await User.findByPk(id, {
     include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
   });
+
+  /*
+   * A role change is the most consequential thing an administrator can do, so
+   * it gets its own entry rather than being folded into a generic update.
+   */
+  if (payload.role !== undefined && payload.role !== previousRole) {
+    await logCrud(request, {
+      action: ACTIVITY_ACTION.ROLE_CHANGE,
+      entity: ENTITY.USER,
+      entityId: id,
+      metadata: { from: previousRole, to: payload.role, targetUserId: id },
+    });
+  } else {
+    await logCrud(request, {
+      action: ACTIVITY_ACTION.UPDATE,
+      entity: ENTITY.USER,
+      entityId: id,
+      metadata: {
+        name: fresh.name,
+        email: fresh.email,
+        isActive: fresh.isActive,
+        wasActive: previousIsActive,
+        role: fresh.roles.map((role) => role.key).join(', '),
+      },
+    });
+  }
+
   return toAdminUser(fresh);
+}
+
+/**
+ * Issue a new password for somebody else's account.
+ *
+ * The recovery path for a person who has forgotten theirs. It clears the
+ * lockout as well as setting the password, which is the part that was
+ * missing before: an account locked out by repeated failed attempts was
+ * checked for the lock *before* the password was compared, so resetting the
+ * password did not get them back in.
+ *
+ * The account is forced to choose a password of its own at the next sign-in.
+ * A password read out over a phone call is a password two people know.
+ */
+export async function resetUserPassword(id, payload, request) {
+  const target = await User.findByPk(id);
+  if (!target) throw AppError.notFound('User not found');
+
+  /*
+   * Generate the password rather than asking the administrator for one.
+   *
+   * Somebody who has forgotten their password is usually handed a new one over
+   * a phone call, and "password123" is exactly what a hurried administrator
+   * types at that moment. Generating it here means the strength of it is not
+   * a function of how rushed the person handing it over is.
+   *
+   * An administrator who genuinely needs to choose the password can still
+   * send one in the body.
+   */
+  const temporaryPassword = payload.password || generateTemporaryPassword();
+
+  await resetPassword({
+    targetUserId: id,
+    newPassword: temporaryPassword,
+    mustChangePassword: payload.mustChangePassword !== false,
+    actor: request.user,
+    ip: request.ip,
+    userAgent: request.get?.('user-agent'),
+  });
+
+  const fresh = await User.findByPk(id, {
+    include: [{ model: Role, as: 'roles' }, ...EMPLOYEE_INCLUDE],
+  });
+
+  /*
+   * The temporary password is returned once, for the administrator to pass on.
+   * It is not stored anywhere in plain text and it is not in the audit log —
+   * the log records that a reset happened, not what the new password was.
+   */
+  return { user: toAdminUser(fresh), temporaryPassword };
 }
 
 /**
@@ -242,11 +462,28 @@ export async function updateUser(id, payload, request) {
  * accepted from the client.
  */
 export async function createEmployeeForUser(id, payload, request) {
-  const user = await User.findByPk(id);
+  const user = await User.findByPk(id, { include: [{ model: Role, as: 'roles' }] });
   if (!user) throw AppError.notFound('User not found');
   if (user.employeeId) throw AppError.conflict('This account already has an employee profile');
 
-  const employee = await Employee.create(payload);
+  /*
+   * Fill in the job title from the account's role when the caller did not
+   * supply one.
+   *
+   * The interface prefills the same value, but a request that reaches the API
+   * some other way would otherwise create a profile with no job title at all —
+   * and a profile with no job title is exactly the state the two records were
+   * meant to avoid. An explicit position always wins; the role only fills a
+   * gap.
+   */
+  const fields = { ...payload };
+
+  if (!fields.position) {
+    const derived = positionForRoles((user.roles || []).map((role) => role.key));
+    if (derived) fields.position = derived;
+  }
+
+  const employee = await Employee.create(fields);
 
   user.employeeId = employee.id;
   await user.save();
@@ -255,7 +492,11 @@ export async function createEmployeeForUser(id, payload, request) {
     action: ACTIVITY_ACTION.CREATE,
     entity: ENTITY.EMPLOYEE,
     entityId: employee.id,
-    metadata: { name: employee.name, linkedUserId: user.id },
+    metadata: {
+      name: employee.name,
+      position: employee.position,
+      linkedUserId: user.id,
+    },
   });
 
   invalidatePublicContent();
@@ -276,6 +517,34 @@ export async function deleteUser(id, request) {
 
   await assertNotLastSuperAdmin({ user, removingSuperAdmin: false, deactivating: true });
 
+  const before = {
+    name: user.name,
+    email: user.email,
+    role: user.roles.map((role) => role.key).join(', '),
+  };
+
   await user.destroy();
+
+  /*
+   * Spend any live reset codes.
+   *
+   * `destroy()` is a soft delete, so the foreign key's CASCADE never fires and
+   * the token rows would be left pointing at an account that no longer
+   * exists. They could not be redeemed — the lookup skips soft-deleted
+   * accounts — but leaving them behind would misreport how many outstanding
+   * codes exist.
+   */
+  await PasswordResetToken.update(
+    { consumedAt: new Date() },
+    { where: { userId: id, consumedAt: null } },
+  );
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.USER,
+    entityId: id,
+    metadata: before,
+  });
+
   return { id: Number(id) };
 }

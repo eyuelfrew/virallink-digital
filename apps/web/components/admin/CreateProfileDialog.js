@@ -3,14 +3,25 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PhotoField } from '@/components/admin/PhotoField';
+import { browserApiUrl } from '@/lib/config';
+import { ROLE_LABELS, positionForRoles } from '@/shared/permissions';
 
 /**
  * Create the employee profile for an account that has none, in one step.
  *
  * The inverse of CreateLoginDialog: an administrator or owner already has a
- * sign-in and turns out to also be staff. Their name — and email — come from the
- * account, so the profile is created and linked without retyping the person. Job
- * title and department are optional and can be filled in later from Employees.
+ * sign-in and turns out to also be staff. Their name and email come from the
+ * account, so the profile is created and linked without retyping the person.
+ *
+ * The job title is derived from the account's role rather than asked for.
+ * An account's role already says what the person does — "SEO Specialist" — and
+ * asking the administrator to type the same thing into a second box means the
+ * two records have to be kept in step by hand, and they drift the first time
+ * one of them is edited. It is prefilled rather than fixed: the administrator
+ * can change it, because the role describes access as much as it describes
+ * the job, and plenty of roles ("Administrator") say nothing about the work.
+ *
+ * Department is not derivable from anything and stays blank.
  */
 export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Create profile', canUpload = true }) {
   const router = useRouter();
@@ -18,6 +29,12 @@ export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Cr
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+
+  const roleKeys = user?.roles || [];
+  const roleLabel = roleKeys.length
+    ? roleKeys.map((key) => ROLE_LABELS[key] || key).join(', ')
+    : 'No role';
+  const suggestedPosition = positionForRoles(roleKeys);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -36,8 +53,9 @@ export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Cr
     };
 
     try {
-      const response = await fetch(`/api/users/${user.id}/employee`, {
+      const response = await fetch(browserApiUrl(`/api/users/${user.id}/employee`), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -52,6 +70,7 @@ export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Cr
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');
@@ -98,6 +117,23 @@ export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Cr
                   you mark it public on the Employees page.
                 </p>
 
+                {/*
+                  * Where the values below come from. Without this the form
+                  * silently invents a job title and silently copies an email,
+                  * and the administrator has no way of seeing that the two
+                  * records now hold the same person.
+                  */}
+                <dl className="rounded-md border border-line bg-surface-muted p-3 text-xs">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-subtle">Account role</dt>
+                    <dd className="text-right font-medium text-ink-soft">{roleLabel}</dd>
+                  </div>
+                  <div className="mt-1.5 flex justify-between gap-3">
+                    <dt className="text-ink-subtle">Email</dt>
+                    <dd className="truncate text-right font-medium text-ink-soft">{user.email}</dd>
+                  </div>
+                </dl>
+
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="profile-name" className="text-sm font-medium text-ink-soft">
                     Full name
@@ -119,8 +155,15 @@ export function CreateProfileDialog({ user, departments = [], triggerLabel = 'Cr
                   <input
                     id="profile-position"
                     name="position"
+                    defaultValue={suggestedPosition || ''}
+                    placeholder={suggestedPosition ? undefined : 'e.g. Video Editor'}
                     className="h-10 rounded-md border border-line bg-surface px-3 text-sm"
                   />
+                  <p className="text-xs text-ink-subtle">
+                    {suggestedPosition
+                      ? `Prefilled from the account's role. Change it if the job title is different.`
+                      : `The account's role does not name a job, so there is nothing to carry over.`}
+                  </p>
                   {fieldErrors.position ? <p className="text-xs text-danger">{fieldErrors.position[0]}</p> : null}
                 </div>
 

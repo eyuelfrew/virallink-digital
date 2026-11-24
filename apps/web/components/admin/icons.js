@@ -3,6 +3,7 @@ import {
   Newspaper, Inbox, UserRound, Building2, PieChart, ArrowLeftRight, ReceiptText,
   ChartColumn, Building, Image, ShieldCheck, History, ListTodo, FolderOpen,
   Target, Mail, Phone, MapPin, UserPlus, Calendar, Tag, ListChecks, UserRoundCog,
+  Send,
 } from 'lucide-react';
 
 /**
@@ -22,7 +23,7 @@ export const ICONS = {
   Briefcase, FolderKanban, Newspaper, Inbox, UserRound, Building2, PieChart,
   ArrowLeftRight, ReceiptText, ChartColumn, Building, Image, ShieldCheck, History,
   ListTodo, FolderOpen, Target, Mail, Phone, MapPin, UserPlus, Calendar, Tag,
-  ListChecks, UserRoundCog,
+  ListChecks, UserRoundCog, Send,
 };
 
 /** Render an icon by name. Unknown or missing names fall back to a neutral glyph. */

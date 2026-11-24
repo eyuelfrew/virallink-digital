@@ -19,9 +19,13 @@ Two independent applications:
 | Website | `apps/web` | `server.js` | 3000 |
 | API | `apps/api` | `src/server.js` | 4000 |
 
-The browser never talks to the API directly. Admin requests go to the website,
-which forwards them over loopback. That means **the API port never needs to be
-exposed or firewalled** — leave it bound to `127.0.0.1`.
+The browser calls the API directly at `https://api.virallinkdigital.com/api/v1/...`
+for every admin and form action. The website only renders pages and performs
+server-side data reads. Passenger exposes the API through its subdomain while the
+Node process itself stays bound to `127.0.0.1:4000` — leave `API_HOST=127.0.0.1`.
+The API must allow `https://virallinkdigital.com` in `CORS_ORIGINS` and set the
+session cookie for `COOKIE_DOMAIN=virallinkdigital.com`, or sign-in will fail from
+the site.
 
 ---
 
@@ -57,18 +61,22 @@ Use cPanel File Manager, or from a local terminal:
 # Build locally first, so the server never compiles. Use production public
 # values here: NEXT_PUBLIC_* are inlined at build time.
 # Bash / Git Bash:
-NEXT_PUBLIC_SITE_URL=https://yourdomain.com npm run build
+cd apps/web && NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com npm run build && cd ../api && npm run build && cd ..
 
 # PowerShell:
-$env:NEXT_PUBLIC_SITE_URL="https://yourdomain.com"; npm run build
+$env:NEXT_PUBLIC_SITE_URL="https://virallinkdigital.com"; $env:NEXT_PUBLIC_API_PUBLIC_URL="https://api.virallinkdigital.com"; npm run build:web; npm run build:api
 
 # Confirm the real origin was baked in, not localhost:
 #   grep "Sitemap:" apps/web/.next/server/app/robots.txt.body
 
 # Create the archive
 tar --exclude=node_modules --exclude=.env --exclude=.git \
-    --exclude=storage -czf virallink.tar.gz apps packages package.json package-lock.json .env.example
+    --exclude=storage --exclude=apps/web/.next/dev -czf virallink.tar.gz apps packages package.json package-lock.json .env.example
 ```
+
+`.next/dev` is development-server output (roughly 748 MB of LevelDB files in this build) and is not needed by the production Node.js app. Exclude it to keep the upload smaller. A stray `.next.zip` left next to `.next` is also deleted/excluded - it is not part of the build. `.next/cache` can be excluded too if you want a smaller upload; `next start` rebuilds what it needs.
+
+**Never extract a build over an existing `.next` directory, and never upload an old `.next.zip`.** Next's HTML and its hashed chunk filenames are one atomic build unit. Mixing two builds leaves HTML referencing chunks that were never uploaded; the browser then gets a `text/plain` 404 for the missing `.js` and shows the route error screen with `ChunkLoadError`. Always stop the app, delete `apps/web/.next` entirely, then extract the fresh build. Every hashed file under `.next/static/chunks` must be present — do not filter that directory by name.
 
 Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 
@@ -94,7 +102,7 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Node.js version | 20.x or 22.x |
 | Application mode | Production |
 | Application root | `virallink/apps/web` |
-| Application URL | `yourdomain.com` |
+| Application URL | `virallinkdigital.com` |
 | Application startup file | `server.js` (or `index.js`, an included alias) |
 
 **Application 2 — API**
@@ -104,12 +112,12 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Node.js version | same as above |
 | Application mode | Production |
 | Application root | `virallink/apps/api` |
-| Application URL | `api.yourdomain.com` |
+| Application URL | `api.virallinkdigital.com` |
 | Application startup file | `src/server.js` (or `index.js`, an included alias) |
 
 The API startup file is `src/server.js`, not `server.js`.
 
-A subdirectory URL such as `yourdomain.com/site` works, but the public site is
+A subdirectory URL such as `virallinkdigital.com/site` works, but the public site is
 much simpler at the domain root because every canonical URL and sitemap entry is
 built from `NEXT_PUBLIC_SITE_URL`.
 
@@ -152,17 +160,21 @@ Two options. Use the cPanel UI if you have it; otherwise a `.env` file.
 
 ### Option A — the UI
 
-**Setup Node.js App -> your app -> Environment Variables**. Add only the
+**Setup Node.js App -> each app -> Environment Variables**. Add only the
 variables each app needs.
 
 **Website app** (`apps/web`):
 
 ```env
 NODE_ENV=production
-SITE_URL=https://yourdomain.com
-NEXT_PUBLIC_SITE_URL=https://yourdomain.com
-NEXT_PUBLIC_API_PUBLIC_URL=
-API_INTERNAL_URL=http://127.0.0.1:4000
+NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com
+# Browser calls go straight to this origin. NEXT_PUBLIC_* is inlined at build
+# time, so this must also be set when you run npm run build (see step 2).
+NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com
+# Server-side rendering uses this base. Use the public origin if the two Node
+# apps are not on the same machine; use http://127.0.0.1:4000 if they are.
+API_INTERNAL_URL=https://api.virallinkdigital.com
+NEXT_PUBLIC_ADMIN_PATH=/vira-admin
 ```
 
 **API app** (`apps/api`):
@@ -172,8 +184,8 @@ NODE_ENV=production
 PORT=4000
 API_HOST=127.0.0.1
 
-SITE_URL=https://yourdomain.com
-CORS_ORIGINS=https://yourdomain.com
+SITE_URL=https://virallinkdigital.com
+CORS_ORIGINS=https://virallinkdigital.com
 
 DB_HOST=localhost
 DB_PORT=3306
@@ -186,6 +198,9 @@ JWT_REFRESH_SECRET=<openssl rand -base64 48, different>
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=30d
 COOKIE_SECURE=true
+# Session cookies must be readable by the website on the parent domain when the
+# browser calls the API directly from another subdomain.
+COOKIE_DOMAIN=virallinkdigital.com
 BCRYPT_ROUNDS=12
 
 STORAGE_DRIVER=local
@@ -199,18 +214,33 @@ LOG_LEVEL=info
 # See step 6.
 AUTO_MIGRATE=true
 AUTO_SEED=true
+
+# Password recovery. All optional — the defaults are sensible.
+# Codes are delivered over Telegram, so this only helps accounts that have
+# Telegram linked.
+PASSWORD_RESET_CODE_TTL_MINUTES=10
+PASSWORD_RESET_MAX_ATTEMPTS=5
+PASSWORD_RESET_MAX_SENDS_PER_HOUR=3
+PASSWORD_RESET_RESEND_SECONDS=60
 ```
 
-The website does not need the database or JWT secrets: it only proxies admin
-requests to the API over loopback. Keep those values on the API app.
+The website does not need the database or JWT secrets: all authentication and
+data access happens at the API, which the browser calls directly. Keep those
+values on the API app.
 
 `NEXT_PUBLIC_*` values are compiled into the client bundle at build time, so
 changing them requires a rebuild — not just a restart.
 
-### Option B — a .env file
+### Option B — a .env file per app
 
-Place `.env` at `/home/cpaneluser/virallink/.env`. Both `config/env.js` (API) and `apps/web/server.js` (website) load this file. Never upload this file from a public
-directory.
+Each app has its own `.env`; neither reads the other.
+
+- `apps/web/.env` — website only (Site URL + `API_INTERNAL_URL`). Never this
+  file from a public directory.
+- `apps/api/.env` — API only. Never this file from a public directory.
+
+Both apps also honour a single root `.env` as a fallback for convenience, but
+the split two-app setup is what is documented here.
 
 ---
 
@@ -266,7 +296,7 @@ convenience, not a deployment step.
 
 **Done in the browser, not the terminal.**
 
-Open `https://yourdomain.com/vira-admin/login`. On an install with no accounts the
+Open `https://virallinkdigital.com/vira-admin/login`. On an install with no accounts the
 page shows **first-time setup** instead of the sign-in form: enter a name, email
 and password, and the account is created with the SUPER_ADMIN role.
 
@@ -310,9 +340,9 @@ node -e "import('./src/config/env.js').then(async m=>{const d=(await import('./s
 Keep `MEDIA_ROOT` **outside** `public_html`. Files are served through the API's
 media route, which validates the key and resolves it inside the media root, so a
 traversal attempt cannot escape. Uploads are re-encoded to WebP by `sharp`,
-which strips EXIF including GPS coordinates. The public site reaches them through
-a Next.js rewrite (`/media/*` → the API over loopback), so no extra web-server
-alias is needed and the API's own address is never exposed.
+which strips EXIF including GPS coordinates. Stored rows use the site-relative
+path `/media/<key>`; a Next.js redirect sends the browser to the API's
+`/api/v1/media/<key>` instead of proxying the bytes through Next.js.
 
 ---
 
@@ -425,7 +455,7 @@ RewriteRule ^(.*)$ $1 [E=REDIRECT_ADMIN:1]
 Confirm the redirect works:
 
 ```bash
-curl -I https://yourdomain.com/
+curl -I https://virallinkdigital.com/
 ```
 
 Expect `301` to the same URL over HTTPS. `COOKIE_SECURE=true` means sessions will
@@ -437,12 +467,12 @@ not work over plain HTTP, so this step is not optional.
 
 ```bash
 # API health
-curl https://api.yourdomain.com/health
+curl https://api.virallinkdigital.com/health
 # → {"status":"ok","database":"up",...}
 
 # Public site
-curl -I https://yourdomain.com/
-curl -I https://yourdomain.com/vira-admin/dashboard
+curl -I https://virallinkdigital.com/
+curl -I https://virallinkdigital.com/vira-admin/dashboard
 ```
 
 The second must return `307` redirecting to the login page — proof the auth gate
@@ -459,7 +489,7 @@ and nothing after that on a database that was already current. If you see
 `migration applied` lines, this deploy brought the schema up to date — which is
 the expected result of the first deploy and of any deploy carrying a new migration.
 
-Then open `https://yourdomain.com/vira-admin/login` in a browser. On a fresh
+Then open `https://virallinkdigital.com/vira-admin/login` in a browser. On a fresh
 install it offers **first-time setup**; create the administrator, and the form
 disappears. On an install that already has accounts it shows the normal sign-in
 form and the setup option is gone.
@@ -467,9 +497,9 @@ form and the setup option is gone.
 Confirm the index protections:
 
 ```bash
-curl -I https://yourdomain.com/robots.txt | grep -i "x-robots\|content-type"
-curl https://yourdomain.com/robots.txt | grep admin
-curl -I https://yourdomain.com/vira-admin/dashboard | grep -i "x-robots"
+curl -I https://virallinkdigital.com/robots.txt | grep -i "x-robots\|content-type"
+curl https://virallinkdigital.com/robots.txt | grep admin
+curl -I https://virallinkdigital.com/vira-admin/dashboard | grep -i "x-robots"
 ```
 
 Then check by hand:
@@ -489,7 +519,7 @@ Then check by hand:
 **cPanel → Cron Jobs**. Run the maintenance job nightly and the backup daily.
 
 ```bash
-# 03:15 — prune expired sessions and old audit rows
+# 03:15 — prune expired sessions, spent reset codes and old audit rows
 15 3 * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/pruneActivity.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
 
 # 04:30 — database backup
@@ -507,6 +537,13 @@ are delivered immediately when they are queued, so this is only a safety net for
 anything a restarted process left behind — but on a host that recycles processes
 unpredictably, it is the difference between "usually arrives" and "arrives".
 
+Password reset codes go through the same queue, so this job is part of the
+recovery path: a code queued while the process was being recycled is delivered
+by the drain rather than lost. It is also why the code's lifetime
+(`PASSWORD_RESET_CODE_TTL_MINUTES`, ten minutes by default) is worth leaving
+generous — a code that arrives after it has expired is a code the person cannot
+use.
+
 ---
 
 ## Telegram bot (optional)
@@ -519,14 +556,75 @@ a bot, and the feature is inert until it is switched on.
    `TELEGRAM_BOT_USERNAME` (the @name without the `@`). Generate a webhook secret
    and set `TELEGRAM_WEBHOOK_SECRET`:
    `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
-3. Set `TELEGRAM_WEBHOOK_URL` to the API's public base URL, then register the
-   webhook (from `apps/api`): `npm run telegram:webhook -- set`.
-   Check it any time with `npm run telegram:webhook`; remove it with `-- delete`.
+3. Set `TELEGRAM_WEBHOOK_URL` to the API's public base URL — `https://api.virallinkdigital.com`
+   — and restart the API. The API compares that value with the webhook
+   Telegram actually has registered and **re-registers when they differ**, so
+   this is normally the only step. `npm run telegram:webhook -- set` does the
+   same thing by hand, and `npm run telegram:webhook --status` shows the
+   registered URL and Telegram's last delivery failure.
 4. Restart the API, then open **Account → Telegram notifications** and connect.
 
 Telegram must be able to reach the API over HTTPS. The webhook URL path contains
 the secret, and Telegram also sends it back in a header; the route requires both,
 so discovering the URL is not enough to drive the bot.
+
+**Three things that silently stop it, and what each looks like:**
+
+| Problem | Symptom | Fix |
+| --- | --- | --- |
+| The subdomain has no certificate | `lastError` mentions an SSL error, or Telegram reports a 526 | Run AutoSSL for the subdomain, not just the apex domain. Telegram refuses an invalid certificate |
+| Apache answers instead of the Node app | `lastError` is `404` | The subdomain's document root must point at the API app, and Passenger must own the path |
+| The webhook still points at the old URL | `lastError` is `530` or a DNS failure | Set `TELEGRAM_WEBHOOK_URL` and restart, or run `npm run telegram:webhook -- set` |
+
+All three are visible in `npm run telegram:webhook --status`, which prints
+Telegram's own last delivery failure rather than leaving you to infer it.
+
+### Testing it before the domain is live
+
+The bot needs a public address to hear from Telegram, but a password-reset
+code only needs the bot to *send*. On a machine with no public address, read
+the chat id out of Telegram's own queue:
+
+```bash
+npm run telegram:chatid --workspace @virallink/api
+```
+
+It removes the webhook so Telegram queues updates, waits for you to message
+the bot, and prints the chat id and username. Put the chat id in the
+account's "Telegram chat id" field (Settings → Users → edit) and reset codes
+are delivered from then on, with no domain involved.
+
+Register the real webhook once the domain is live — the API does it by itself
+when `TELEGRAM_WEBHOOK_URL` is set and the registered URL does not match.
+
+### The webhook has to be reachable
+
+This is the failure that hides best. A bot whose webhook points at a URL
+Telegram cannot reach does not crash and does not log anything of its own — it
+simply never hears anything. The visible consequences are that nobody can link
+Telegram and nobody can recover a forgotten password, and the symptom reads as
+"the feature is broken" rather than "the webhook is down".
+
+Two things guard against it:
+
+```bash
+# check it — prints the registered URL and Telegram's last delivery failure
+npm run telegram:webhook --status --workspace @virallink/api
+
+# register it against the public base URL
+npm run telegram:webhook -- set https://virallinkdigital.com --workspace @virallink/api
+```
+
+The API also checks the webhook on every boot and logs a warning when Telegram
+cannot reach it, so the problem surfaces in the application log rather than
+only in Telegram's own status.
+
+**If the API is behind a tunnel** — a Cloudflare quick tunnel, `ngrok`, or
+similar — the public URL changes every time the tunnel restarts, and the
+webhook has to be re-registered each time. A quick tunnel's random
+`trycloudflare.com` hostname is not a stable address to point a webhook at.
+Use the production domain on cPanel; use a tunnel only for local testing, and
+re-register the webhook after each restart of it.
 
 ---
 
@@ -546,11 +644,14 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 | Symptom | Cause and fix |
 | --- | --- |
 | 500 on every page | App logs show the real error. `Setup Node.js App → your app → Open Logs`. Most often a missing env var or a failed migration. |
+| Browser says "No `Access-Control-Allow-Origin` header" and API requests return 500 | The API is rejecting the site's origin. Set `CORS_ORIGINS=https://virallinkdigital.com` in the **API app's** environment (exact string, no quotes, no trailing slash, no `www.`, no `*`) and restart the API app. Confirm with `curl -i -X OPTIONS https://api.virallinkdigital.com/api/v1/auth/login -H "Origin: https://virallinkdigital.com" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type"` — a 204 with `Access-Control-Allow-Origin` means it is fixed. |
 | `EADDRINUSE` | Passenger assigned a different port than `PORT`. Read `PORT` from the cPanel panel and match it. |
 | Admin login succeeds then bounces | `COOKIE_SECURE=true` with HTTP. Enable AutoSSL. Also check `NEXT_PUBLIC_SITE_URL` matches the real origin exactly, including scheme. |
 | Media uploads fail | `MEDIA_ROOT` not writable. Run the permission check from step 8. |
 | Stale content after an edit | The API caches public reads for 2–10 minutes. Any admin write clears it, so a stale page means the write itself failed. |
 | `429` from the contact form | 5 submissions/hour per IP by default. Raise `RATE_LIMIT_CONTACT_MAX`. |
+| No reset code arrives | The bot cannot receive updates, so it cannot reply to the link that carries the code. Run `npm run telegram:webhook --status --workspace @virallink/api` — it prints Telegram's last delivery failure. If the URL is a tunnel that has restarted, re-register it. |
+| Telegram calls time out | The API is slow to reach. `TELEGRAM_API_TIMEOUT_MS` defaults to 30000; raise it if the host is far away. |
 | API returns 502 | Either the app is stopped or `API_INTERNAL_URL` is wrong. `curl http://127.0.0.1:4000/health` from Terminal. |
 | `Module not found` after a Git pull | Run `npm install` again at the repository root. |
 | Out of memory / process killed | Lower `DB_POOL_MAX` to 2 and `BCRYPT_ROUNDS` is not the cause — image processing is. Raise the host's memory limit or set `images.unoptimized = true` (already the default). |
@@ -573,7 +674,7 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 - [ ] Only `SUPER_ADMIN` accounts can reach user and role management
 - [ ] First administrator created, and `/vira-admin/login` no longer offers first-time setup
 - [ ] `X-Robots-Tag` present on `/vira-admin/*` responses
-- [ ] `https://yourdomain.com/robots.txt` disallows `/vira-admin`
+- [ ] `https://virallinkdigital.com/robots.txt` disallows `/vira-admin`
 
 ## Operational notes
 

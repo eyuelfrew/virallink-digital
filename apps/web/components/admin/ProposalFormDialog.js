@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { PROPOSAL_STATUS_LABELS } from '@virallink/shared/enums';
 
 export function ProposalFormDialog({ proposal = null, clients = [], triggerLabel = 'New proposal' }) {
@@ -34,9 +35,10 @@ export function ProposalFormDialog({ proposal = null, clients = [], triggerLabel
     if (!isEdit) payload.clientId = Number(form.get('clientId'));
 
     try {
-      const response = await fetch(isEdit ? `/api/proposals/${proposal.id}` : '/api/proposals', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/proposals/${proposal.id}` : '/api/proposals'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -49,6 +51,7 @@ export function ProposalFormDialog({ proposal = null, clients = [], triggerLabel
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond.');

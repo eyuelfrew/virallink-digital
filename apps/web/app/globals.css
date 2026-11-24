@@ -366,6 +366,42 @@ html.theme-anim body * {
     background: var(--surface-muted);
   }
 
+  /*
+   * Header navigation link.
+   *
+   * The underline is a transform, so it animates on the compositor and never
+   * triggers layout. It grows from the centre rather than from one edge, which
+   * reads as a deliberate accent instead of an underline arriving late.
+   */
+  .nav-link {
+    position: relative;
+  }
+
+  .nav-link::after {
+    content: '';
+    position: absolute;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.25rem;
+    height: 2px;
+    border-radius: 9999px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: center;
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .nav-link:hover::after,
+  .nav-link:focus-visible::after {
+    transform: scaleX(1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nav-link::after {
+      transition: none;
+    }
+  }
+
   /* Hairline rule used instead of shadows to separate areas. */
   .rule {
     border-top: 1px solid var(--border);
@@ -396,6 +432,11 @@ html.theme-anim body * {
     max-width: 68ch;
     line-height: 1.75;
     color: var(--ink-soft);
+    /* Long words, URLs and code must not force the column wider than its grid
+       track. The default `min-width: auto` on grid items lets unbreakable
+       content push the track (and the whole page) sideways. */
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   .prose-content h2 {

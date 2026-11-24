@@ -101,18 +101,22 @@ src/
 │  ├─ vira-admin/              route group; noindex, authenticated
 │  │  ├─ login/page.js
 │  │  ├─ (protected)/layout.js + per-module pages + _components/
-│  ├─ api/auth/                Next route handlers: session cookie issue/clear only
 │  ├─ robots.js  sitemap.js  manifest.js  icon assets
 │  └─ layout.js  not-found.js  error.js  global-error.js  loading.js
 ├─ components/{ui,site,admin,seo,forms}
-├─ lib/{api,seo,auth,utils,constants,format}
+├─ lib/{api,config,seo,auth,utils,constants,format}
+│         api.js → server-side rendering via API_INTERNAL_URL
+│         config.js → browserApiUrl() → direct API origin
 ├─ hooks/
-└─ proxy.js                    redirect gate only (Next 16 renamed middleware)
+└─ proxy.js                    Next 16 route-guard middleware, not an API proxy
+                               (formerly middleware.ts)
 ```
 
 Public pages are Server Components and read through `lib/api` (server-side
-fetcher with Next cache tags). Client components are limited to: contact form,
-mobile nav, cookie-free counters, and admin tables/filters/charts.
+fetcher with Next cache tags) at `API_INTERNAL_URL` — server-to-server rendering,
+not a browser proxy. Client components call the API from the browser through
+`browserApiUrl()` with `credentials: 'include'`: the contact form, admin
+forms/tables/filters/charts, chat and media uploads.
 
 ### apps/api
 
@@ -264,7 +268,8 @@ title, editable by an admin.
 `robots.txt` disallow it, every admin page exports
 `metadata: { robots: { index: false, follow: false, nocache: true } }`, and the
 Nginx vhost also emits `X-Robots-Tag: noindex, nofollow` for that prefix.
-`proxy.js` performs a cheap cookie-presence check and redirects to
+`proxy.js` is the Next 16 route-guard middleware (formerly `middleware.ts`), not
+an API proxy: it performs a cheap cookie-presence check and redirects to
 `/vira-admin/login?next=...`; the real session verification and RBAC happen in
 the server-side data layer and the API. A missing/forged cookie gets no data.
 
@@ -351,7 +356,9 @@ diff. Secrets, password fields and file buffers are never stored in metadata.
   animation library on public routes beyond small CSS transitions, dynamic
   imports for the charts and admin bundle. Admin code lives in its own route
   group so none of it reaches the public bundle. Target: LCP < 2.0s, CLS < 0.05,
-  INP < 200ms on a mid-range Android over 4G.
+  INP < 200ms on a mid-range Android over 4G. The font files are vendored in
+  `apps/web/app/fonts/` and loaded with `next/font/local`, so a build never
+  depends on reaching Google and always produces the same output.
 - **Content integrity** — no keyword stuffing, no fabricated statistics, awards or
   testimonials. Empty sections hide themselves rather than rendering placeholders.
 
@@ -401,8 +408,11 @@ cPanel specifics that shape the build:
 
 - **Two Node apps, one per process.** `apps/web` starts `node_modules/.bin/next start`
   on its assigned port; `apps/api` starts `server.js` on its own. Both listen on
-  `127.0.0.1`; Passenger maps them. `API_INTERNAL_URL` is used server-to-server so
-  app-to-app calls never cross the public internet.
+  `127.0.0.1`; Passenger maps them. `API_INTERNAL_URL` is for server-side
+  rendering only (`lib/api.js` / `adminData`): when the API is exposed at its own
+  origin such as `https://api.virallinkdigital.com`, it is set to that URL instead
+  of the loopback address. Browser requests never use it — they go to
+  `NEXT_PUBLIC_API_PUBLIC_URL` via `browserApiUrl()`.
 - **`output: 'standalone'` is not used.** Passenger owns the process lifecycle and
   expects `node_modules` to exist in the app root, which standalone output would
   strip. Standard `next build` output is used instead, with `.npmrc` to keep
@@ -417,9 +427,11 @@ cPanel specifics that shape the build:
   `npm run backup`; activity-log pruning and token-blocklist cleanup on the same
   cron. No long-lived in-process schedulers, since Passenger restarts apps
   unpredictably on shared plans.
-- **Env management** uses the cPanel "Environment Variables" UI plus a `.env` in
-  the app root; `config/env.js` validates with zod at boot so a missing variable
-  fails fast with its name rather than surfacing as a runtime 500.
+- **Env management** is split per app: `apps/api/.env` (backend; zod-validated at
+  boot by `config/env.js`) and `apps/web/.env` (frontend; Next.js loads it).
+  Each app is independent and needs only its own file; inline `.env` entries are
+  honoured by the API when `.env` is unavailable. The cPanel "Environment
+  Variables" UI works for either.
 - **Resource discipline.** Passenger enforces per-app memory limits and kills
   over-limit processes, so connection pooling is capped (Sequelize pool max 5),
   image processing is queued through `sharp`'s concurrency limiter, and Recharts

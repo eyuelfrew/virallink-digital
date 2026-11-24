@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link2, RefreshCw, Send, Unlink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 
 /**
  * Connect a Telegram account to receive notifications.
@@ -25,7 +26,7 @@ export function TelegramLinkCard({ initial = null }) {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/telegram', { cache: 'no-store' });
+      const response = await fetch(browserApiUrl('/api/auth/telegram'), { cache: 'no-store', credentials: 'include' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error?.message || 'Could not load your Telegram status.');
       setStatus(payload.data);
@@ -54,7 +55,7 @@ export function TelegramLinkCard({ initial = null }) {
     setPending(true);
     setError(null);
     try {
-      const response = await fetch('/api/auth/telegram/link', { method: 'POST' });
+      const response = await fetch(browserApiUrl('/api/auth/telegram/link'), { method: 'POST', credentials: 'include' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error?.message || 'Could not start the connection.');
       setIssue(payload.data);
@@ -69,7 +70,7 @@ export function TelegramLinkCard({ initial = null }) {
     setPending(true);
     setError(null);
     try {
-      const response = await fetch('/api/auth/telegram', { method: 'DELETE' });
+      const response = await fetch(browserApiUrl('/api/auth/telegram'), { method: 'DELETE', credentials: 'include' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error?.message || 'Could not disconnect.');
       setStatus(payload.data);

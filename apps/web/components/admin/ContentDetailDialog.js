@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { browserApiUrl } from '@/lib/config';
 import { CONTENT_STAGE_LABELS, DELIVERABLE_TYPE_LABELS, METRIC_PLATFORM_LABELS } from '@virallink/shared/enums';
 
 /**
@@ -23,7 +24,7 @@ export function ContentDetailDialog({ card, clients = [], onClose, onSaved }) {
 
   useEffect(() => {
     if (!card?.id) return;
-    fetch(`/api/content/${card.id}/history`)
+    fetch(browserApiUrl(`/api/content/${card.id}/history`), { credentials: 'include' })
       .then((response) => response.json())
       .then((data) => setHistory(data.data || []))
       .catch(() => setHistory([]));
@@ -51,8 +52,9 @@ export function ContentDetailDialog({ card, clients = [], onClose, onSaved }) {
     };
 
     try {
-      const response = await fetch(`/api/content/${card.id}`, {
+      const response = await fetch(browserApiUrl(`/api/content/${card.id}`), {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });

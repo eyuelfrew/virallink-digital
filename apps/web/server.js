@@ -23,23 +23,35 @@ const path = require('node:path');
 const { loadEnvConfig } = require('@next/env');
 
 /*
- * Next only loads .env from the web app's own directory. On cPanel the single
- * .env lives at the repository root, one level above both apps, so load it here
- * before Next starts. This covers runtime server-side values such as
- * API_INTERNAL_URL when the operator follows the documented "one .env at the
- * repo root" option. NEXT_PUBLIC_* values are still inlined at build time, so
- * they must also be present during `npm run build`.
+ * Next only loads .env from the web app's own directory automatically. This
+ * wrapper loads apps/web/.env explicitly before Next starts, which is what the
+ * web deployment uses (either the cPanel Environment Variables UI, or this
+ * file in the app root). The web app is independent of the API: it needs the
+ * site URL and where the API is reachable, nothing else.
+ *
+ * A repository-root .env is honoured as an optional fallback for a single-file
+ * setup, but apps/web/.env is the source of truth.
  *
  * Existing environment variables win: cPanel's Environment Variables UI is not
  * overridden, because @next/env never replaces a value that is already set.
  */
-// Passenger always assigns PORT. Capture it before loading the shared .env,
-// because that file also carries the API's PORT (4000); falling back to it here
-// would make the website try to bind the API's port when Passenger has not set
-// one explicitly.
+// Like the API, the web app has its own .env. Passenger always assigns PORT;
+// capture it before loading the file, because that file would otherwise win
+// and rebind the API's port.
 const passengerPort = process.env.PORT;
 
-loadEnvConfig(path.resolve(__dirname, '../..'));
+// Load the web app's own apps/web/.env first; a repository-root .env is a
+// fallback for a single-file setup.
+{
+  const fs = require('node:fs');
+  const webEnv = path.join(__dirname, '.env');
+  const rootEnv = path.resolve(__dirname, '../../.env');
+  if (fs.existsSync(webEnv)) {
+    loadEnvConfig(__dirname);
+  } else if (fs.existsSync(rootEnv)) {
+    loadEnvConfig(path.resolve(__dirname, '../..'));
+  }
+}
 
 const http = require('node:http');
 const next = require('next');

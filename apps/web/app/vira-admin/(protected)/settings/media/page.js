@@ -4,12 +4,14 @@ import { AdminHeader, AdminPanel, TableWrapper, Th, Td } from '@/components/admi
 import { AdminToolbar, AdminPagination } from '@/components/admin/AdminTableParts';
 import { DeleteButton } from '@/components/admin/DeleteButton';
 import { formatBytes } from '@/lib/utils';
-import { Image } from 'lucide-react';
+import { Image, Music4 } from 'lucide-react';
+import { PurgeButton } from '@/components/admin/PurgeButton';
 
 export const metadata = { title: 'Media library' };
 
 export default async function MediaPage({ searchParams }) {
-  await requirePermission('media.read');
+  const session = await requirePermission('media.read');
+  const canDeleteFiles = Boolean(session.permissions?.includes('media.delete'));
 
   const params = await searchParams;
 
@@ -26,7 +28,10 @@ export default async function MediaPage({ searchParams }) {
     <>
       <AdminHeader
         title="Media library"
-        description="Uploaded images. Files are stored on disk, metadata in the database."
+        description="Uploaded images and audio. Files are stored on disk, metadata in the database."
+        action={
+          <PurgeButton canDelete={canDeleteFiles} />
+        }
       />
 
       <AdminPanel dense>
@@ -40,6 +45,7 @@ export default async function MediaPage({ searchParams }) {
               label: 'All types',
               options: [
                 { value: 'image', label: 'Images' },
+                { value: 'audio', label: 'Audio' },
                 { value: 'document', label: 'Documents' },
               ],
             },
@@ -53,7 +59,14 @@ export default async function MediaPage({ searchParams }) {
               {rows.map((media) => (
                 <div key={media.id} className="group relative rounded-lg border border-line bg-surface">
                   <div className="relative aspect-square overflow-hidden rounded-t-lg bg-surface-sunken">
-                    {media.url ? (
+                    {media.kind === 'audio' ? (
+                      // An audio file has no picture to show, so it gets a
+                      // player instead of a broken image.
+                      <div className="flex size-full flex-col items-center justify-center gap-2 p-3">
+                        <Music4 className="size-7 text-ink-subtle" aria-hidden="true" />
+                        <audio controls src={media.url} className="w-full" />
+                      </div>
+                    ) : media.url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={media.url}
@@ -71,7 +84,9 @@ export default async function MediaPage({ searchParams }) {
                   <div className="p-3">
                     <p className="truncate text-sm font-medium text-ink">{media.title || media.key}</p>
                     <p className="mt-0.5 text-xs text-ink-subtle">
-                      {media.width}×{media.height} · {formatBytes(media.sizeBytes)}
+                      {media.kind === 'audio'
+                        ? `${media.mimeType || 'audio'} · ${formatBytes(media.sizeBytes)}`
+                        : `${media.width}×${media.height} · ${formatBytes(media.sizeBytes)}`}
                     </p>
 
                     <div className="mt-2 flex items-center justify-between">
@@ -92,7 +107,7 @@ export default async function MediaPage({ searchParams }) {
           </>
         ) : (
           <p className="py-8 text-center text-sm text-ink-muted">
-            No media uploaded yet. Use the upload button in any form that accepts images.
+            No media uploaded yet. Use the upload button in any form that accepts images or audio.
           </p>
         )}
       </AdminPanel>

@@ -1,17 +1,18 @@
 import Link from 'next/link';
-import { Columns3, LayoutList } from 'lucide-react';
+import { BarChart3, Columns3, LayoutList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Table / Board switcher for the tasks module.
+ * Table / Board / Performance switcher for the tasks module.
  *
- * Two links rather than client state: each view is its own route, so the current
+ * Links rather than client state: each view is its own route, so the current
  * view survives a refresh, is shareable, and the Swiss-army table keeps its own
  * filters. `aria-current` marks the active one for assistive tech.
  */
 const VIEWS = [
   { key: 'table', label: 'Table', href: '/vira-admin/tasks', Icon: LayoutList },
   { key: 'board', label: 'Board', href: '/vira-admin/tasks/board', Icon: Columns3 },
+  { key: 'performance', label: 'Performance', href: '/vira-admin/tasks/performance', Icon: BarChart3 },
 ];
 
 export function TasksViewToggle({ view = 'table' }) {

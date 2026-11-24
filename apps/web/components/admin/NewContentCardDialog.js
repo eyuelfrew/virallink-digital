@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { browserApiUrl } from '@/lib/config';
 import { Plus } from 'lucide-react';
 import { CONTENT_STAGE_LABELS, DELIVERABLE_TYPE_LABELS, METRIC_PLATFORM_LABELS } from '@virallink/shared/enums';
 
@@ -41,8 +42,9 @@ export function NewContentCardDialog({ clients = [], defaultStage = 'idea', comp
     };
 
     try {
-      const response = await fetch('/api/deliverables', {
+      const response = await fetch(browserApiUrl('/api/deliverables'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -56,6 +58,7 @@ export function NewContentCardDialog({ clients = [], defaultStage = 'idea', comp
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond.');

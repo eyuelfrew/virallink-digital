@@ -13,6 +13,8 @@ const Page = createAdminListPage({
   icon: 'Newspaper',
   searchPlaceholder: 'Search by title',
   publishable: true,
+  // Blog posts are public via their status, not an isPublished boolean.
+  isPublished: (record) => record.status === 'published',
   defaultSort: 'publishedAt',
   defaultOrder: 'DESC',
   form: {

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { browserApiUrl } from '@/lib/config';
 import { AlertCircle, UserPlus } from 'lucide-react';
 
 /**
@@ -38,8 +39,9 @@ export function SetupForm({ onDone }) {
     };
 
     try {
-      const response = await fetch('/api/auth/setup', {
+      const response = await fetch(browserApiUrl('/api/auth/setup'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });

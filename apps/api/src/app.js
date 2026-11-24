@@ -3,15 +3,24 @@ import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
-import pinoHttp from 'pino-http';
 
 import env from './config/env.js';
-import logger from './config/logger.js';
 import { requestContext } from './middleware/requestContext.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { globalLimiter } from './middleware/rateLimit.js';
 import apiRoutes from './routes/index.js';
 import sequelize from './config/database.js';
+
+/*
+ * Boot-time CORS diagnostic. Module-level code runs when server.js imports this
+ * file, so this prints at startup — unlike the `origin()` callback below, which
+ * only runs when a request actually carries an Origin header.
+ */
+// eslint-disable-next-line no-console
+console.log(
+  '[app.js] CORS config:',
+  JSON.stringify({ siteUrl: env.SITE_URL, corsOrigins: env.CORS_ORIGINS, envFile: process.env.ENV_FILE_LOADED_FROM }),
+);
 
 /**
  * Express application.
@@ -84,7 +93,12 @@ export function createApp() {
       origin(origin, callback) {
         // Same-origin and server-to-server calls arrive without an Origin header.
         if (!origin) return callback(null, true);
-        if (env.CORS_ORIGINS.includes(origin)) return callback(null, true);
+        // SITE_URL is the site's own origin, so it must always be allowed — even
+        // if a stale CORS_ORIGINS value is still set in the hosting panel.
+        // This logs only when a cross-origin request arrives — not at startup.
+        // eslint-disable-next-line no-console
+        console.log('[app.js] CORS origin check:', origin, env.SITE_URL, env.CORS_ORIGINS);
+        if (origin === env.SITE_URL || env.CORS_ORIGINS.includes(origin)) return callback(null, true);
         return callback(Object.assign(new Error('Origin not allowed'), { statusCode: 403 }));
       },
       credentials: true,
@@ -98,19 +112,6 @@ export function createApp() {
   /* ---------------------------------------------------------------- */
   /* Logging, request ids, cookies                                     */
   /* ---------------------------------------------------------------- */
-
-  app.use(
-    pinoHttp({
-      logger,
-      // Reuse the id minted by requestContext so logs and headers agree.
-      genReqId: (request) => request.id,
-      customLogLevel: (request, response) => {
-        if (response.statusCode >= 500) return 'error';
-        if (response.statusCode >= 400) return 'warn';
-        return 'info';
-      },
-    }),
-  );
 
   app.use(requestContext);
   app.use(cookieParser());

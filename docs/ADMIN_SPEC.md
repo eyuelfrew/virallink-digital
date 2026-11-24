@@ -17,9 +17,9 @@ both apps from `packages/shared`.
 
 **The five facts another engineer/AI must not miss:**
 
-1. **The API is the only security boundary.** The Next.js proxy cookie check,
-   page-level `requirePermission`, and hidden nav links are UX only. Every admin
-   API route independently enforces session + permission.
+1. **The API is the only security boundary.** The Next.js route-guard middleware
+   cookie check, page-level `requirePermission`, and hidden nav links are UX only.
+   Every admin API route independently enforces session + permission.
 2. **Permissions are the contract.** A key declared in
    `packages/shared/src/permissions.js` is seeded to the DB, checked by API
    middleware, and used to filter the sidebar. Adding a module means touching all
@@ -30,9 +30,11 @@ both apps from `packages/shared`.
    activity logs.
 4. **Everything mutable is audited** through `activity_logs` (append-only), and
    all money is `DECIMAL(14,2)` converted to integer cents for arithmetic.
-5. **Deployment is cPanel/Passenger, not Docker.** The API binds loopback only;
-   the web app forwards cookies over loopback. Migrations and the RBAC seed run
-   automatically and idempotently at API boot.
+5. **Deployment is cPanel/Passenger, not Docker.** The API binds loopback only
+   and is exposed through its public subdomain; the browser calls that public API
+   directly with cookies, while the web app reads server-to-server via
+   `adminData()` for rendering. Migrations and the RBAC seed run automatically
+   and idempotently at API boot.
 
 **Where to start in the code:**
 
@@ -58,24 +60,32 @@ Two applications, one database, one machine:
 ```
 Browser ──► Next.js (apps/web, port 3000)
               │  Server Components render admin pages
-              │  fetch() over loopback with the caller's cookies
+              │  server-side reads via adminData() / API_INTERNAL_URL
               ▼
            Express API (apps/api, 127.0.0.1:4000)
               │  session + permission checks per route
               ▼
            MySQL 8 via Sequelize 6
+
+Browser ──► browser fetch() direct to API with cookies (credentials: include)
+              │  https://api.virallinkdigital.com/api/v1/... via browserApiUrl()
+              ▼
+           same Express API (the only security boundary) ──► MySQL 8
 ```
 
 Invariants that hold everywhere below:
 
-1. **The browser never talks to the API directly in production.** All admin calls go
-   through Next.js (Server Components via `adminData()`, client mutations via the
-   `/api/[...path]` forwarding route). `NEXT_PUBLIC_API_PUBLIC_URL` is empty in
-   production for exactly this reason.
+1. **Browser calls go straight to the API.** Client components use
+   `browserApiUrl()` with `credentials: 'include'` against
+   `https://api.virallinkdigital.com/api/v1/...` (cookies on the parent domain
+   `virallinkdigital.com`). There are no browser-facing Next route handlers;
+   `PUBLIC_API_URL` comes from `NEXT_PUBLIC_API_PUBLIC_URL` and defaults to
+   `https://api.virallinkdigital.com`. Server Components still read server-to-server
+   through `adminData()` / `API_INTERNAL_URL` — that is rendering, not a proxy.
 2. **The API is the only security boundary.** Everything the web app does — the
-   proxy cookie check, `requireSession`, `requirePermission`, hiding nav links — is
-   a usability measure. A forged cookie that passes those layers still gets 401/403
-   from the API on every data call.
+   route-guard middleware cookie check, `requireSession`, `requirePermission`,
+   hiding nav links — is a usability measure. A forged cookie that passes those
+   layers still gets 401/403 from the API on every data call.
 3. **One permission string is the contract** between `@virallink/shared/permissions`,
    the API middleware, and the sidebar renderer.
 
@@ -116,9 +126,8 @@ clean (`/api/v1/employees`). It guards itself with two mechanisms:
 
 1. **First-segment allowlist.** `ADMIN_RESOURCE_PREFIXES` (shared, frozen) decides
    which paths it owns; anything else falls through with `next('router')` so unknown
-   paths produce a genuine 404 rather than a misleading 401. The same list is used
-   by the web app's forwarding route, so a resource added on one side cannot 404
-   silently on the other.
+   paths produce a genuine 404 rather than a misleading 401. The same list is shared
+   with the web app, so a resource added on one side cannot 404 silently on the other.
 2. **`router.use(authenticate)`** placed above every handler — no admin route can
    be declared unauthenticated by accident.
 
@@ -142,8 +151,9 @@ jobs, departments, users, roles, tasks, deliverables, content, proposals`.
 - `requireAuth` re-reads the user + roles + permissions from the DB on **every
   request**: deactivating an account or changing a role takes effect immediately,
   and a `tokenVersion` mismatch (password/role change) kills outstanding tokens.
-- Auth accepts `Authorization: Bearer` or the cookie, so both the browser and the
-  Next route handlers work unchanged.
+- Auth accepts `Authorization: Bearer` or the cookie, so direct browser calls
+  (via `browserApiUrl()` with credentials included) and server-to-server reads
+  both work.
 
 **Auth endpoints** (`/api/v1/auth`, rate-limited with `authLimiter` on the
 sensitive ones):
@@ -160,7 +170,7 @@ sensitive ones):
 | GET | `/telegram` | the caller's Telegram link state |
 | POST | `/telegram/link` | issues a one-time code + deep link; the chat id is learned from the bot, never supplied by the client |
 | DELETE | `/telegram/link` | detaches Telegram; outbox history is retained |
-| POST | `/verify` | cheap signature check for proxy-style callers; not authoritative |
+| POST | `/verify` | cheap signature check for a fast session probe; not authoritative |
 
 Login failures return one generic message so account existence is not revealed.
 
@@ -277,8 +287,8 @@ Error (`src/middleware/error.js`):
   credentials enabled.
 - **Rate limiting**: `globalLimiter` is mounted **only** on `/public` and
   `/contact` — the anonymous surface. Admin traffic is deliberately not IP-limited
-  (it already requires a session + per-route permission, requests arrive over
-  loopback, and one dashboard view fans out into many calls). `authLimiter`
+  (it already requires a session + per-route permission, requests arrive at the
+  public API origin, and one dashboard view fans out into many calls). `authLimiter`
   protects login/setup with a much tighter budget.
 - **Body limits**: JSON/urlencoded capped at 1 MB; uploads capped by
   `MEDIA_MAX_BYTES`, ≤ 10 files, MIME allowlist in `fileFilter`.
@@ -513,11 +523,12 @@ Key column rules:
    filesystem access (traversal guard).
 4. With `STORAGE_DRIVER=s3` the serving route is unused — the object store serves
    files directly.
-5. The admin uploads through the Next.js route `app/api/media`, which forwards the
-   multipart body untouched — the generic `/api/[...path]` proxy rewrites every
-   body as JSON and cannot carry a file. Stored files are then served **same-origin**:
-   Next rewrites `/media/*` to the API's media route over loopback, so the
-   loopback-only API is never exposed to the browser. The reusable `PhotoField`
+5. The admin uploads straight to `POST /api/v1/media` via `browserApiUrl()` with
+   a multipart body and `credentials: 'include'` — there is no Next route handler in
+   the middle (a generic JSON forwarder could not carry a file anyway). Stored files
+   are served by the API: Next issues a `/media/*` REDIRECT to the public API URL, so
+   the browser fetches the file directly from
+   `https://api.virallinkdigital.com/api/v1/media/...`. The reusable `PhotoField`
    component uploads on pick and submits the resulting media id; removing it clears
    the id (`null` = unlink) without deleting the file. Wired to `employees.photoMediaId`
    (public team photo) in `EmployeeFormDialog` and `CreateProfileDialog`.
@@ -552,8 +563,9 @@ polling, because there are no long-running schedulers on the deployment target.
 Four independent layers; each is labelled in the code as a convenience, with the
 API as the real boundary:
 
-1. **`proxy.js`** (Next request interceptor) — if the `vl_access` cookie is
-   *absent*, redirect to `/vira-admin/login?next=…`. Deliberately does not verify
+1. **`proxy.js`** (Next.js route-guard middleware, formerly `middleware.ts` — not an
+   API proxy) — if the `vl_access` cookie is *absent*, redirect to
+   `/vira-admin/login?next=…`. Deliberately does not verify
    the token (no DB round trip in a layer that is easy to bypass). Matcher
    excludes `/vira-admin/login` to avoid a redirect loop.
 2. **`(protected)/layout.js`** — `requireSession()` server-side; no session →
@@ -572,11 +584,14 @@ Anti-indexing (three layers): page/layout `metadata.robots = noindex`, the
   to dashboard. Calls `GET /auth/setup-status`: on a fresh install it renders
   `SetupForm` (first-run SUPER_ADMIN creation) instead of the login form; the API
   independently refuses once any user exists.
-- `LoginForm` posts to the app's own `/api/auth/login` route handler (one of the
-  four auth forwarders: `login`, `logout`, `refresh`, `setup`, each proxying to
-  `/api/v1/auth/*` server-side with the cookies attached),
-  then does a **full navigation** to the target so server components re-read the
-  new cookie. `?next=` is validated to be same-origin (open-redirect guard).
+- `LoginForm` and `SetupForm` post auth calls straight to `POST /api/v1/auth/*`
+  via `browserApiUrl()` (i.e. `https://api.virallinkdigital.com/api/v1/auth/*`)
+  with `credentials: 'include'`; the API sets the cookies on the parent domain
+  `virallinkdigital.com`. `AdminShell` signs out through the same direct call to
+  `POST /api/v1/auth/logout`. Every browser-side call in the admin console uses
+  `browserApiUrl()` for the same reason. After a successful auth call the form
+  does a **full navigation** to the target so server components re-read the new
+  cookie. `?next=` is validated to be same-origin (open-redirect guard).
 - Stale-cookie notice: a present-but-dead `vl_access` shows a warning that signing
   in will replace it.
 - Error copy is verbatim from the API — one generic message for bad email/password.
@@ -591,7 +606,7 @@ the browser):
   **filtered by the session's permission set**. Groups with no visible children
   are dropped. Hiding is cosmetic — the API enforces the same permissions.
 - Header: page title context + `UserMenu` (initials avatar, role label,
-  permission count, sign-out → `POST /api/auth/logout` + full refresh).
+  permission count, sign-out → direct `POST /api/v1/auth/logout` + full refresh).
 
 Sidebar structure (permission in brackets):
 
@@ -641,7 +656,8 @@ Route group `(protected)` — 24 pages, all server components, all `force-dynami
 Server pages call `adminData(path)` (`(protected)/lib/adminData.js`):
 
 - Builds the cookie header from `vl_access`/`vl_refresh`, fetches
-  `API_INTERNAL_URL/api/v1<path>` over loopback, `cache: 'no-store'`, 8 s
+  `API_INTERNAL_URL/api/v1<path>` server-to-server (rendering only, not a browser
+  proxy), `cache: 'no-store'`, 8 s
   `AbortSignal` timeout (an unreachable API must not hang a render into a memory
   kill on shared hosting).
 - Returns `{ ok, status, data, meta, totals, error, isEmpty }` — **never throws**.
@@ -651,8 +667,9 @@ Server pages call `adminData(path)` (`(protected)/lib/adminData.js`):
   - `isEmpty` → empty state with guidance ("Nothing appears on the website until
     you publish it")
 - `meta` defaults to `{ page: 1, pageSize: 20, total: 0, totalPages: 0 }`.
-- Client components mutate through the app's `/api/[...path]` forwarder (which
-  forwards only `ADMIN_RESOURCE_PREFIXES` paths) and then `router.refresh()`.
+- Client components mutate by calling the API directly via `browserApiUrl()`
+  with `credentials: 'include'` (the API enforces the `ADMIN_RESOURCE_PREFIXES`
+  allowlist and per-route permissions), then `router.refresh()`.
 - Search/filter state lives in the **URL query string**; pagination and filters
   survive navigation and are shareable.
 
@@ -685,7 +702,7 @@ Shared table furniture: `AdminToolbar` (search + filters as URL params),
 | `charts.js` | `FinanceTrendChart` (a chart only where direction over time adds meaning) |
 | `DeleteButton` | `DeleteButton`, `PublishToggle` with confirm step |
 | `ConfirmDialog` | destructive-action confirmation |
-| `PhotoField` | single-image upload + remove (uploads to `/api/media` on pick, submits the media id) |
+| `PhotoField` | single-image upload + remove (uploads direct to `/api/v1/media` via `browserApiUrl()` on pick, submits the media id) |
 | Form dialogs | `ClientFormDialog`, `CompanyFormDialog`, `EmployeeFormDialog`, `CreateLoginDialog`, `CreateProfileDialog`, `ServiceFormDialog`, `ProjectFormDialog`, `BlogFormDialog`, `TaskFormDialog`, `InvoiceFormDialog`, `TransactionFormDialog`, `ShareholderFormDialog`, `UserFormDialog`, `DeliverableFormDialog`, `MetricFormDialog`, `ProposalFormDialog`, `NewContentCardDialog` |
 | Domain views | `ContentBoard` (kanban + stage moves), `ContentDetailDialog`, `ClientReportView`, `ReportExportButtons`, `ClientActivityForms`, `SetupForm` |
 | Danger/utility | `ClearActivityDialog` (range-scoped audit purge), `TelegramLinkCard` (connect/disconnect the account's Telegram) |

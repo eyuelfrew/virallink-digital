@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 
 /**
  * Clears activity log entries inside a chosen date range.
@@ -51,7 +52,7 @@ export function ClearActivityDialog() {
       if (from) search.set('from', from);
       if (to) search.set('to', to);
 
-      const response = await fetch(`/api/activity?${search.toString()}`, { method: 'DELETE' });
+      const response = await fetch(browserApiUrl(`/api/activity?${search.toString()}`), { method: 'DELETE', credentials: 'include' });
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {

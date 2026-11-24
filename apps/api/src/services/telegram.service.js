@@ -38,25 +38,63 @@ export function deepLink(code) {
 /**
  * Call a Bot API method. Throws on any failure — Telegram reports problems in
  * the body with `ok: false`, so a 200 alone is not success.
+ *
+ * Transient failures are retried. The connection to Telegram is not always
+ * reliable, and a plain "fetch failed" would otherwise cost a password-reset
+ * code that somebody is waiting for. Only transport-level problems and the
+ * statuses that mean "try again" are retried; an `ok: false` body is the
+ * API's considered answer — "chat not found" will not become true on a
+ * second attempt — and is raised immediately.
  */
-async function callApi(method, params = {}) {
+async function callApi(method, params = {}, { attempts = 3 } = {}) {
   if (!isEnabled()) throw new Error('Telegram is not configured');
 
-  const response = await fetch(`${API_BASE}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-    // Without a deadline a hung request would stall the outbox drain.
-    signal: AbortSignal.timeout(10000),
-  });
+  let lastError;
 
-  const data = await response.json().catch(() => null);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response;
+    let data = null;
 
-  if (!response.ok || !data?.ok) {
-    throw new Error(`Telegram ${method} failed: ${data?.description || `HTTP ${response.status}`}`);
+    try {
+      response = await fetch(`${API_BASE}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        // Without a deadline a hung request would stall the outbox drain. The
+        // deadline is generous because the API is not always close by.
+        signal: AbortSignal.timeout(env.TELEGRAM_API_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // The request never reached Telegram: a dropped connection, a DNS
+      // failure, a timeout. Worth trying again.
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        continue;
+      }
+      throw new Error(`Telegram ${method} failed: ${error.message}`);
+    }
+
+    data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      const description = data?.description || `HTTP ${response.status}`;
+
+      // 429 and 5xx mean "come back later"; anything else is a considered
+      // refusal.
+      if ((response.status === 429 || response.status >= 500) && attempt < attempts) {
+        lastError = new Error(description);
+        await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        continue;
+      }
+
+      throw new Error(`Telegram ${method} failed: ${description}`);
+    }
+
+    return data.result;
   }
 
-  return data.result;
+  throw lastError || new Error(`Telegram ${method} failed`);
 }
 
 /**
@@ -94,8 +132,33 @@ export async function deleteWebhook() {
   return callApi('deleteWebhook', { drop_pending_updates: false });
 }
 
+export async function setMyCommands(commands) {
+  return callApi('setMyCommands', { commands });
+}
+
 export async function getWebhookInfo() {
   return callApi('getWebhookInfo');
+}
+
+/**
+ * Read the updates Telegram has queued.
+ *
+ * Only works while no webhook is registered — Telegram refuses the call
+ * otherwise, and delivers to the webhook instead of queueing.
+ *
+ * That restriction is what makes this useful rather than a wart. On a machine
+ * with no stable public address there is no way for Telegram to deliver an
+ * update inbound, so the queue is the only place a chat id can be read from.
+ * It is how somebody finds their own chat id before they have linked
+ * anything: message the bot, read the queued update, and the id is there.
+ */
+export async function getUpdates({ offset = 0, timeoutSeconds = 0, limit = 20 } = {}) {
+  return callApi('getUpdates', {
+    offset,
+    limit,
+    timeout: timeoutSeconds,
+    allowed_updates: ['message', 'callback_query'],
+  });
 }
 
 /** Escape the three characters Telegram's HTML mode treats specially. */

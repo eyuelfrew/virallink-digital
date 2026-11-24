@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { TASK_STATUS_LABELS, TASK_PRIORITY_LABELS } from '@virallink/shared/enums';
 
 /**
@@ -30,6 +31,17 @@ export function TaskFormDialog({ task = null, triggerLabel = 'Add task', employe
     if (open) {
       setError(null);
       setFieldErrors({});
+      /*
+       * A freshly opened dialog is never mid-save.
+       *
+       * The dialog's markup is unmounted when it closes, but this component
+       * and its state are not — so `pending` survives the close. It used to be
+       * left set to true by the save-success path, which left the button
+       * stuck on "Saving…" and disabled the next time the dialog was opened.
+       * The success path clears it now; this makes the invariant explicit
+       * rather than incidental.
+       */
+      setPending(false);
     }
   }, [open]);
 
@@ -51,9 +63,10 @@ export function TaskFormDialog({ task = null, triggerLabel = 'Add task', employe
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/tasks/${task.id}` : '/api/tasks', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/tasks/${task.id}` : '/api/tasks'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -67,6 +80,7 @@ export function TaskFormDialog({ task = null, triggerLabel = 'Add task', employe
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

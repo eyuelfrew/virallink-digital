@@ -142,6 +142,11 @@ export const ENTITY = Object.freeze({
   TRANSACTION: 'transaction',
   INVOICE: 'invoice',
   PAYMENT: 'payment',
+  TASK: 'task',
+  DELIVERABLE: 'deliverable',
+  METRIC: 'metric',
+  PROPOSAL: 'proposal',
+  JOB: 'job',
   ACTIVITY_LOG: 'activity_log',
   SETTINGS: 'settings',
 });
@@ -151,6 +156,7 @@ export const MEDIA_KIND = Object.freeze({
   VIDEO: 'video',
   DOCUMENT: 'document',
   SVG: 'svg',
+  AUDIO: 'audio',
 });
 
 export const DELIVERABLE_TYPE = Object.freeze({
@@ -204,7 +210,6 @@ export const TASK_STATUS = Object.freeze({
   TODO: 'todo',
   IN_PROGRESS: 'in_progress',
   REVIEW: 'review',
-  BLOCKED: 'blocked',
   DONE: 'done',
   CANCELLED: 'cancelled',
 });
@@ -220,7 +225,6 @@ export const TASK_STATUS_LABELS = Object.freeze({
   [TASK_STATUS.TODO]: 'To do',
   [TASK_STATUS.IN_PROGRESS]: 'In progress',
   [TASK_STATUS.REVIEW]: 'In review',
-  [TASK_STATUS.BLOCKED]: 'Blocked',
   [TASK_STATUS.DONE]: 'Done',
   [TASK_STATUS.CANCELLED]: 'Cancelled',
 });

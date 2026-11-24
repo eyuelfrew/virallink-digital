@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import {
   CONTENT_STAGE_LABELS,
   DELIVERABLE_TYPE_LABELS,
@@ -101,8 +102,9 @@ export function ContentBoard({ board, clients = [], canWrite = true, week, curre
       );
 
       try {
-        const response = await fetch(`/api/content/${cardId}/stage`, {
+        const response = await fetch(browserApiUrl(`/api/content/${cardId}/stage`), {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ stage: toStage, ...extra }),
         });
@@ -610,9 +612,9 @@ function BoardSummary({ totals, columns, stats, week, filter, onFilter }) {
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-          {metrics.map((metric) => (
+          {metrics.map(({ key, ...metric }) => (
             <PulseMetric
-              key={metric.key}
+              key={key}
               {...metric}
               active={Boolean(metric.filter) && filter === metric.filter}
               onClick={

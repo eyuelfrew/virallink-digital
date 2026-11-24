@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { TRANSACTION_TYPE, TRANSACTION_STATUS, PAYMENT_METHOD } from '@virallink/shared/enums';
 
 export function TransactionFormDialog({ transaction = null, triggerLabel = 'Add transaction' }) {
@@ -24,8 +25,8 @@ export function TransactionFormDialog({ transaction = null, triggerLabel = 'Add 
     }
 
     Promise.all([
-      fetch('/api/finance/categories').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
-      fetch('/api/clients').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/finance/categories'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/clients'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
     ]).then(([cats, cli]) => {
       setCategories(cats);
       setClients(cli);
@@ -55,9 +56,10 @@ export function TransactionFormDialog({ transaction = null, triggerLabel = 'Add 
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/finance/transactions/${transaction.id}` : '/api/finance/transactions', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/finance/transactions/${transaction.id}` : '/api/finance/transactions'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -71,6 +73,7 @@ export function TransactionFormDialog({ transaction = null, triggerLabel = 'Add 
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

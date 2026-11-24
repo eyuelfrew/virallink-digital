@@ -70,9 +70,15 @@ export default async function ClientsPage() {
                 <li key={client.id || client.name} className="bg-surface">
                   <ClientLogo client={client} className="h-28" />
 
-                  {client.industry ? (
-                    <p className="pb-4 text-center text-xs text-ink-subtle">{client.industry}</p>
-                  ) : null}
+                  {/* The name is written under every tile, logo or not: a client
+                      published without a logo shows a monogram, and the monogram
+                      alone would not say who it is. */}
+                  <div className="px-4 pb-4 text-center">
+                    <p className="text-sm font-semibold text-ink">{client.name}</p>
+                    {client.industry ? (
+                      <p className="mt-0.5 text-xs text-ink-subtle">{client.industry}</p>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ul>

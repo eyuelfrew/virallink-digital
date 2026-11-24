@@ -10,7 +10,6 @@ import {
 import {
   ArrowDown,
   ArrowUp,
-  Ban,
   CalendarClock,
   CheckCircle2,
   Circle,
@@ -151,7 +150,6 @@ const TASK_STATUS_LOOK = {
   [TASK_STATUS.TODO]: { tone: 'neutral', Icon: Circle },
   [TASK_STATUS.IN_PROGRESS]: { tone: 'brand', Icon: CircleDot },
   [TASK_STATUS.REVIEW]: { tone: 'info', Icon: Eye },
-  [TASK_STATUS.BLOCKED]: { tone: 'danger', Icon: Ban },
   [TASK_STATUS.DONE]: { tone: 'success', Icon: CheckCircle2 },
   [TASK_STATUS.CANCELLED]: { tone: 'neutral', Icon: XCircle },
 };

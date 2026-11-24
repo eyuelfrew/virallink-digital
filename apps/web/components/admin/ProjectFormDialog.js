@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { PROJECT_STATUS } from '@virallink/shared/enums';
 
 export function ProjectFormDialog({ project = null, triggerLabel = 'Add project' }) {
@@ -24,8 +25,8 @@ export function ProjectFormDialog({ project = null, triggerLabel = 'Add project'
     }
 
     Promise.all([
-      fetch('/api/services').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
-      fetch('/api/clients').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/services'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/clients'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
     ]).then(([svc, cli]) => {
       setServices(svc);
       setClients(cli);
@@ -65,9 +66,10 @@ export function ProjectFormDialog({ project = null, triggerLabel = 'Add project'
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/portfolio/${project.id}` : '/api/portfolio', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/portfolio/${project.id}` : '/api/portfolio'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -81,6 +83,7 @@ export function ProjectFormDialog({ project = null, triggerLabel = 'Add project'
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

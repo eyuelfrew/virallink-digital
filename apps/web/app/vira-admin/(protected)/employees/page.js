@@ -42,6 +42,9 @@ export default async function EmployeesPage({ searchParams }) {
   const canCreateLogin = session.permissions?.includes('user.write');
   const canUploadPhoto = session.permissions?.includes('media.write');
 
+  /** Role key to role name, for showing an account's access level. */
+  const roleName = (key) => roles.find((role) => role.key === key)?.name || key;
+
   return (
     <>
       <AdminHeader
@@ -122,13 +125,24 @@ export default async function EmployeesPage({ searchParams }) {
                   <Td align="right">
                     <div className="flex items-center justify-end gap-2">
                       {/* The link that gives this person a sign-in. Offered only
-                          where one is missing, so the row never shows a dead action. */}
+                          where one is missing, so the row never shows a dead action.
+                          The account's role is shown beside it: the position says
+                          what the person does, the role says what they may
+                          reach, and the two drifting apart is what this table
+                          exists to make visible. */}
                       {employee.login ? (
-                        <BooleanBadge
-                          value={employee.login.isActive}
-                          trueLabel="Has login"
-                          falseLabel="Login off"
-                        />
+                        <div className="flex flex-col gap-1">
+                          <BooleanBadge
+                            value={employee.login.isActive}
+                            trueLabel="Has login"
+                            falseLabel="Login off"
+                          />
+                          {employee.login.roles?.length ? (
+                            <span className="text-xs text-ink-subtle">
+                              {(employee.login.roles || []).map(roleName).join(', ')}
+                            </span>
+                          ) : null}
+                        </div>
                       ) : canCreateLogin ? (
                         <CreateLoginDialog employee={employee} roles={roles} />
                       ) : null}

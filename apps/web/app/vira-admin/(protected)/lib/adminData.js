@@ -119,5 +119,49 @@ export function toQuery(params = {}) {
   return query ? `?${query}` : '';
 }
 
-export { adminRequest };
+async function adminUpload(path, formData) {
+  const store = await cookies();
+  const cookieHeader = [
+    store.get('vl_access') && `vl_access=${store.get('vl_access').value}`,
+    store.get('vl_refresh') && `vl_refresh=${store.get('vl_refresh').value}`,
+  ]
+    .filter(Boolean)
+    .join('; ');
+
+  const base = (process.env.API_INTERNAL_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
+
+  try {
+    const response = await fetch(`${base}/api/v1${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+      },
+      body: formData,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(Number(process.env.API_TIMEOUT_MS) || 8000),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: payload?.data ?? null,
+      meta: payload?.meta ?? null,
+      totals: payload?.totals ?? null,
+      error: payload?.error ?? null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      meta: null,
+      totals: null,
+      error: { code: 'NETWORK_ERROR', message: error.message },
+    };
+  }
+}
+
+export { adminRequest, adminUpload };
 export default adminData;

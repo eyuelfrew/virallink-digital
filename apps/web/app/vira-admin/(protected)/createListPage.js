@@ -74,6 +74,12 @@ export function createAdminListPage(config) {
     searchPlaceholder,
     filters = [],
     publishable = false,
+    /**
+     * How to tell whether a row is published. Most resources carry a boolean
+     * `isPublished`; blog posts use `status === 'published'`. A function lets a
+     * resource override the default without changing the shared PublishToggle.
+     */
+    isPublished = (record) => record.isPublished,
     itemName = 'record',
     icon,
     form,
@@ -83,6 +89,10 @@ export function createAdminListPage(config) {
      * Optional extra server-side data for the form dialog, e.g. the employee list
      * an assignee picker needs. Called with the search params so it can filter.
      * Whatever it returns is handed to `form.triggerProps` / `form.editProps`.
+     *
+     * Those two also receive the session, so a dialog can adapt to what the
+     * signed-in person may do — the clients dialog, for instance, only offers
+     * the logo upload to someone who may write media.
      */
     load,
     defaultSort,
@@ -91,7 +101,7 @@ export function createAdminListPage(config) {
   } = config;
 
   async function Page({ searchParams }) {
-    await requirePermission(permission);
+    const session = await requirePermission(permission);
 
     const params = await searchParams;
 
@@ -123,7 +133,7 @@ export function createAdminListPage(config) {
             form || headerActions ? (
               <>
                 {headerActions}
-                {form ? <form.Trigger {...(form.triggerProps ? form.triggerProps(extra) : {})} /> : null}
+                {form ? <form.Trigger {...(form.triggerProps ? form.triggerProps(extra, session) : {})} /> : null}
               </>
             ) : null
           }
@@ -190,10 +200,10 @@ export function createAdminListPage(config) {
                       <Td align="right">
                         <div className="flex items-center justify-end gap-2">
                           {publishable ? (
-                            <PublishToggle resource={resource} id={record.id} published={record.isPublished} itemName={itemName} />
+                            <PublishToggle resource={resource} id={record.id} published={isPublished(record)} itemName={itemName} />
                           ) : null}
 
-                          {form ? <form.EditTrigger record={record} {...(form.editProps ? form.editProps(extra) : {})} /> : null}
+                          {form ? <form.EditTrigger record={record} {...(form.editProps ? form.editProps(extra, session) : {})} /> : null}
 
                           <DeleteButton resource={resource} id={record.id} label={record.name || record.title} itemName={itemName} />
                         </div>

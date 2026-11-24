@@ -65,6 +65,7 @@ export function ClientActivityForms({ clientId, kind = 'note', triggerLabel = 'A
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

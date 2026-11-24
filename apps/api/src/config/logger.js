@@ -34,13 +34,25 @@ export const logger = pino({
   level: env.LOG_LEVEL,
   redact: { paths: redactPaths, censor: '[redacted]' },
   messageLimit,
-  base: { service: 'virallink-api', env: env.NODE_ENV },
-  timestamp: pino.stdTimeFunctions.isoTime,
+  // Keep the boot noise down: no pid/hostname/service/env on every line.
+  // In production, structured JSON carries those via the container/host metadata.
+  base: undefined,
+  timestamp: pino.stdTimeFunctions.shortTime,
   formatters: {
     level: (label) => ({ level: label }),
   },
   ...(env.isDevelopment && env.LOG_PRETTY
-    ? { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } } }
+    ? {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'HH:MM:ss',
+            ignore: 'pid,hostname,service,env,time',
+            singleLine: true,
+          },
+        },
+      }
     : {}),
 });
 

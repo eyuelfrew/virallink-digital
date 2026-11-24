@@ -142,20 +142,56 @@ export const makeListQuerySchema = (allowedSorts) =>
 /* -------------------------------------------------------------------------- */
 
 export const loginSchema = z.object({
-  email: emailSchema,
+  identifier: z.string().trim().min(1, 'Enter your email, username or phone').max(191).optional(),
+  email: emailSchema.optional(),
   // Deliberately permissive: login must not leak password-policy rules, and the
   // strength check only applies when *changing* a password.
   password: z.string().min(1, 'Password is required').max(200),
-});
+}).refine((v) => v.identifier || v.email, 'Enter your email, username or phone');
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required').max(200),
   newPassword: passwordSchema,
 });
 
+/**
+ * Password recovery.
+ *
+ * The code is six digits, delivered over Telegram. It is short enough to read
+ * off a phone screen and type into a browser, which is why the service — not
+ * this schema — caps how many times a code may be tried and how often one may
+ * be sent.
+ */
+export const forgotPasswordSchema = z.object({
+  email: emailSchema,
+});
+
+export const resetPasswordSchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from Telegram'),
+  newPassword: passwordSchema,
+});
+
+/**
+ * An administrator setting somebody else's password.
+ *
+ * `password` is optional: omit it and the API generates a strong temporary one
+ * and returns it, which is safer than an administrator picking "password123"
+ * while handing credentials over a phone call.
+ *
+ * `mustChangePassword` forces the holder to choose their own at the next
+ * sign-in, which is what makes it safe to hand a temporary password out.
+ */
+export const resetUserPasswordSchema = z.object({
+  password: passwordSchema.optional(),
+  mustChangePassword: z.boolean().default(true),
+});
+
 export const createUserSchema = z.object({
   name: trimmed(120),
-  email: emailSchema,
+  email: emailSchema.optional(),
+  username: z.string().trim().toLowerCase().max(64).optional(),
+  phone: z.string().trim().max(60).optional(),
   password: passwordSchema,
   role: z.enum(valuesOf(ROLES)),
   isActive: z.boolean().default(true),
@@ -165,13 +201,33 @@ export const createUserSchema = z.object({
    * reports the account as unlinked until one is chosen.
    */
   employeeId: idSchema.nullable().optional(),
-});
+}).refine(
+  (v) => v.email || v.username || v.phone,
+  'An account needs at least one of email, username or phone',
+);
 
 export const updateUserSchema = z
   .object({
     name: trimmed(120).optional(),
     email: emailSchema.optional(),
+    username: z.string().trim().toLowerCase().max(64).nullable().optional(),
+    phone: z.string().trim().max(60).nullable().optional(),
     password: passwordSchema.optional(),
+    /** Force the holder to choose a password of their own at the next sign-in. */
+    mustChangePassword: z.boolean().optional(),
+    /**
+     * The person's Telegram username, without the @. Registering it is what
+     * lets them recover their password over Telegram before they have linked
+     * an account: the bot sends a reset code only to a chat whose username
+     * matches this one.
+     */
+    telegramUsername: z.string().trim().max(64).optional(),
+    /**
+     * The person's Telegram chat id. Setting it means the bot can deliver to
+     * them directly, which is what a password-reset code needs. `null` unlinks
+     * it.
+     */
+    telegramChatId: z.coerce.number().int().positive().nullable().optional(),
     role: z.enum(valuesOf(ROLES)).optional(),
     isActive: z.boolean().optional(),
     employeeId: idSchema.nullable().optional(),
@@ -360,6 +416,9 @@ export const listDeliverablesQuerySchema = paginationQuerySchema.extend({
   month: monthSchema.optional(),
   type: z.enum(valuesOf(DELIVERABLE_TYPE)).optional(),
   platform: z.enum(valuesOf(METRIC_PLATFORM)).optional(),
+  // Without this key Zod strips `clientId` from the query, so the service never
+  // sees it and the client detail page would show every client's content.
+  clientId: z.coerce.number().int().positive().optional(),
 });
 
 export const reportQuerySchema = z.object({
@@ -689,8 +748,17 @@ export const upsertTaskSchema = z.object({
   dueDate: z.coerce.date().nullable().optional(),
 });
 
-export const updateTaskSchema = upsertTaskSchema
-  .partial()
+export const updateTaskSchema = z
+  .object({
+    title: trimmed(200).optional(),
+    description: optionalText(4000),
+    status: z.enum(valuesOf(TASK_STATUS)).optional(),
+    priority: z.enum(valuesOf(TASK_PRIORITY)).optional(),
+    assigneeId: z.coerce.number().int().min(1).nullable().optional(),
+    clientId: z.coerce.number().int().min(1).nullable().optional(),
+    projectId: z.coerce.number().int().min(1).nullable().optional(),
+    dueDate: z.coerce.date().nullable().optional(),
+  })
   .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
 
 export const listTasksQuerySchema = paginationQuerySchema.extend({

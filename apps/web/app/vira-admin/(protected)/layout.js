@@ -37,5 +37,18 @@ export default async function ProtectedLayout({ children }) {
   // upstream, and rendering a shell with no user would be confusing.
   if (!session?.email) redirect(`${ADMIN_PATH}/login`);
 
+  /*
+   * Somebody whose password was set by an administrator has to choose one of
+   * their own before they use the console.
+   *
+   * The change-password page sits outside this group on purpose — if it were
+   * inside, this redirect would send it to itself, forever.
+   *
+   * The API enforces the same rule independently. This is the courtesy
+   * version: it saves the person from landing on a page whose every action
+   * would be refused.
+   */
+  if (session.mustChangePassword) redirect(`${ADMIN_PATH}/change-password`);
+
   return <AdminShell session={session}>{children}</AdminShell>;
 }

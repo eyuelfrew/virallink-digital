@@ -1,13 +1,14 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { browserApiUrl } from '@/lib/config';
 import { Image as ImageIcon, Trash2 } from 'lucide-react';
 
 /**
  * A single image field: preview, upload and remove.
  *
- * The chosen file is uploaded immediately to `/api/media` (a dedicated
- * multipart proxy) and the resulting media id is what the surrounding form
+ * The chosen file is uploaded straight to the API's `/api/v1/media` endpoint
+ * and the resulting media id is what the surrounding form
  * submits through a hidden input — so the form still works as a plain
  * uncontrolled `<form>` and the upload never has to be repeated at save time.
  *
@@ -41,7 +42,7 @@ export function PhotoField({
     body.append('folder', folder);
 
     try {
-      const response = await fetch('/api/media', { method: 'POST', body });
+      const response = await fetch(browserApiUrl('/api/media'), { method: 'POST', body, credentials: 'include' });
       const data = await response.json().catch(() => ({}));
 
       const stored = data?.data?.stored?.[0];

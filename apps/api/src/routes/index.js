@@ -3,6 +3,7 @@ import authRoutes from './v1/auth.routes.js';
 import publicRoutes from './v1/public.routes.js';
 import contactRoutes from './v1/contact.routes.js';
 import telegramRoutes from './v1/telegram.routes.js';
+import chatRoutes from './v1/chat.routes.js';
 import adminRoutes from './v1/admin.routes.js';
 import { readMedia } from '../services/media.service.js';
 
@@ -40,6 +41,15 @@ router.use('/auth', authRoutes);
  * caught by the admin authentication guard.
  */
 router.use('/telegram', telegramRoutes);
+
+/**
+ * Realtime chat — private and group threads with live updates.
+ *
+ * Self-guarded with the standard `requireAuth` (like every authenticated
+ * namespace here) and mounted here rather than in the admin router because
+ * users of every role chat, not staff only.
+ */
+router.use('/chat', chatRoutes);
 
 /**
  * GET /api/v1/media/:year/:month/:file

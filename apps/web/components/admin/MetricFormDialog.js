@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { METRIC_PLATFORM_LABELS } from '@virallink/shared/enums';
 
 /** Current month as YYYY-MM, matching the API's key format. */
@@ -57,8 +58,9 @@ export function MetricFormDialog({ deliverable, existing = null, triggerLabel = 
     };
 
     try {
-      const response = await fetch('/api/deliverables/metrics', {
+      const response = await fetch(browserApiUrl('/api/deliverables/metrics'), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -72,6 +74,7 @@ export function MetricFormDialog({ deliverable, existing = null, triggerLabel = 
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

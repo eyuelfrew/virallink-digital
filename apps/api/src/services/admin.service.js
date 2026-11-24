@@ -6,6 +6,7 @@ import { allowOnly } from '../middleware/validate.js';
 import { buildMeta, toLimitOffset, generateUniqueSlug, normaliseSearch } from '../utils/query.js';
 import { logCrud, buildDiff, publishAction } from '../middleware/audit.js';
 import { invalidatePublicContent } from './public.service.js';
+import { deleteUnreferencedMedia } from './media.service.js';
 import { toCents, fromCents, calculateInvoiceTotals, deriveInvoiceStatus, sumCents, outstandingCents } from '../utils/money.js';
 import { ACTIVITY_ACTION, ENTITY, TRANSACTION_TYPE, INVOICE_STATUS } from '../shared/enums.js';
 
@@ -53,6 +54,7 @@ const {
   ActivityLog,
   Media,
   User,
+  Role,
 } = models;
 
 /** Columns a client may write for each resource. Anything else is dropped. */
@@ -247,11 +249,17 @@ export async function listEmployees({ page, pageSize, search, sort, order, depar
   // Which of these employees already have a sign-in. The admin uses it to offer
   // "Create login" only where one is missing, so a person is never retyped into
   // the user form. One query for the whole page rather than one per row.
+  //
+  // The account's roles come along because the employees table shows them next
+  // to the job title — the role says what the person may reach and the
+  // position says what they do, and showing only one is how the two records
+  // drift apart unnoticed.
   const ids = result.rows.map((employee) => employee.id);
   const logins = ids.length
     ? await User.findAll({
         where: { employeeId: { [Op.in]: ids } },
         attributes: ['id', 'email', 'isActive', 'employeeId'],
+        include: [{ model: Role, as: 'roles', attributes: ['key'], required: false }],
       })
     : [];
   const loginByEmployee = new Map(logins.map((user) => [Number(user.employeeId), user]));
@@ -260,7 +268,14 @@ export async function listEmployees({ page, pageSize, search, sort, order, depar
     const login = loginByEmployee.get(Number(employee.id));
     return {
       ...employee.get({ plain: true }),
-      login: login ? { userId: login.id, email: login.email, isActive: login.isActive } : null,
+      login: login
+        ? {
+            userId: login.id,
+            email: login.email,
+            isActive: login.isActive,
+            roles: (login.roles || []).map((role) => role.key),
+          }
+        : null,
     };
   });
 
@@ -300,6 +315,28 @@ export async function updateEmployee(id, payload, request) {
   const fields = allowOnly(payload, WRITABLE.employee);
   await employee.update(fields);
 
+  /*
+   * Keep the linked account's name in step.
+   *
+   * A linked account and its employee profile are one person recorded twice:
+   * the account says what they may reach, the profile says what they do, and
+   * the name is the same name in both. Editing one and not the other leaves
+   * two different names for one person — and the profile's is the one the
+   * public team page shows, so the website quietly keeps the old one.
+   *
+   * The account is found by the link rather than through an include, because
+   * `getEmployee` does not carry one and this is a write, not a display.
+   */
+  let syncedAccount = false;
+
+  if (fields.name !== undefined && fields.name !== before.name) {
+    const account = await User.findOne({ where: { employeeId: id }, attributes: ['id'] });
+    if (account) {
+      await account.update({ name: fields.name });
+      syncedAccount = true;
+    }
+  }
+
   // Publishing an employee is the moment they become public, so it gets its own
   // log action rather than a generic "update".
   const action =
@@ -309,7 +346,12 @@ export async function updateEmployee(id, payload, request) {
     action,
     entity: ENTITY.EMPLOYEE,
     entityId: employee.id,
-    metadata: buildDiff(before, employee.get({ plain: true })),
+    metadata: {
+      ...buildDiff(before, employee.get({ plain: true })),
+      // Recorded so the trail says the account was renamed too, rather than
+      // leaving a name change on one record and a mystery on the other.
+      ...(syncedAccount ? { linkedAccountRenamed: true } : {}),
+    },
   });
 
   invalidatePublicContent();
@@ -528,7 +570,12 @@ export async function createClient(payload, request) {
   });
 
   invalidatePublicContent();
-  return client;
+  /*
+   * Return the full record rather than the row that was just inserted: the
+   * insert has no `logo` association loaded, so the admin form would save a
+   * client and come back with no logo until the page was reloaded.
+   */
+  return getClient(client.id);
 }
 
 export async function updateClient(id, payload, request) {
@@ -561,6 +608,11 @@ export async function archiveClient(id, request) {
 
   await client.update({ isPublic: false, status: 'inactive' });
   await client.destroy();
+
+  // The logo went with the client.
+  await deleteUnreferencedMedia([client.logoMediaId], {
+    ignore: [{ table: 'clients', id: client.id }],
+  });
 
   await logCrud(request, {
     action: ACTIVITY_ACTION.DELETE,
@@ -709,6 +761,11 @@ export async function deleteService(id, request) {
   }
 
   await service.destroy();
+
+  // The image went with the service.
+  await deleteUnreferencedMedia([service.imageMediaId], {
+    ignore: [{ table: 'services', id: service.id }],
+  });
 
   await logCrud(request, {
     action: ACTIVITY_ACTION.DELETE,
@@ -900,6 +957,11 @@ export async function deleteProject(id, request) {
   if (!project) throw AppError.notFound('Project not found');
 
   await project.destroy();
+
+  // The cover went with the project.
+  await deleteUnreferencedMedia([project.coverMediaId], {
+    ignore: [{ table: 'projects', id: project.id }],
+  });
 
   await logCrud(request, {
     action: ACTIVITY_ACTION.DELETE,
@@ -1648,7 +1710,15 @@ export async function updateTestimonial(id, payload, request) {
 }
 
 export async function deleteTestimonial(id, request) {
+  const testimonial = await Testimonial.findByPk(id);
+
   await Testimonial.findByPk(id).then((row) => row?.destroy());
+
+  // The author's photo went with the testimonial.
+  await deleteUnreferencedMedia([testimonial?.authorPhotoMediaId], {
+    ignore: [{ table: 'testimonials', id: testimonial?.id }],
+  });
+
   await logCrud(request, { action: ACTIVITY_ACTION.DELETE, entity: ENTITY.TESTIMONIAL, entityId: id });
   invalidatePublicContent();
   return { id: Number(id), deleted: true };

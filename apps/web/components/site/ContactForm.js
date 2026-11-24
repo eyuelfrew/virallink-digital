@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { Send, CheckCircle2, AlertCircle } from 'lucide-react';
 
 /**
@@ -58,12 +59,13 @@ export function ContactForm({ services = [] }) {
     };
 
     try {
-      const response = await fetch('/api/contact', {
+      const response = await fetch(browserApiUrl('/api/contact'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Form-Loaded-At': String(loadedAt.current),
         },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -71,14 +73,14 @@ export function ContactForm({ services = [] }) {
 
       if (!response.ok) {
         // Field errors are keyed by field name and map straight onto the inputs.
-        setErrors(data.details || {});
-        setMessage(data.error || 'Your message could not be sent. Please try again.');
+        setErrors(data.error?.details || {});
+        setMessage(data.error?.message || 'Your message could not be sent. Please try again.');
         setStatus('error');
         return;
       }
 
       setStatus('success');
-      setMessage(data.message || 'Thank you. We will be in touch.');
+      setMessage(data.data?.message || 'Thank you. We will be in touch.');
       formRef.current?.reset();
       setHoneypot('');
     } catch {
