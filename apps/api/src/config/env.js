@@ -7,25 +7,37 @@ import { z } from 'zod';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Monorepo-aware .env discovery. The app root on cPanel contains .env already;
- * locally it lives at the repo root, so walk upward from this file.
+ * Monorepo-aware .env discovery.
+ *
+ * Several .env files can exist at once: the cPanel app root, the API app
+ * directory, and the repository root. Loading only the *first* one found led to
+ * a stale repository-root file silently overriding the values the user had
+ * edited in the app-root .env — most visibly CORS_ORIGINS.
+ *
+ * Load every candidate instead, highest priority first. dotenv never overwrites
+ * a value already present, so:
+ *   1. cPanel's Environment Variables UI wins (they are already in process.env)
+ *   2. the app root .env wins over repository-root leftovers
+ *   3. later files only fill in variables that are still missing
  */
 function loadEnvFiles() {
-  // here = <repo>/apps/api/src/config, so the monorepo root is four levels up.
+  // here = <repo>/apps/api/src/config.
   const candidates = [
+    path.resolve(process.cwd(), '.env'), // cPanel app root (highest on the server)
+    path.resolve(here, '../../.env'), // apps/api/.env
+    path.resolve(here, '../../../.env'), // apps/.env
     path.resolve(here, '../../../../.env'), // monorepo root (local dev)
-    path.resolve(here, '../../../.env'), // apps/api/.env
-    path.resolve(process.cwd(), '.env'), // process cwd (cPanel app root)
   ];
+
+  const loaded = [];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
-      dotenv.config({ path: candidate });
-      // The first match wins; also record where it came from for diagnostics.
-      process.env.ENV_FILE_LOADED_FROM = candidate;
-      return;
+      dotenv.config({ path: candidate, quiet: true });
+      loaded.push(candidate);
     }
   }
-  dotenv.config();
+
+  process.env.ENV_FILE_LOADED_FROM = loaded.length ? [...new Set(loaded)].join(', ') : '(none)';
 }
 
 loadEnvFiles();
@@ -93,16 +105,63 @@ const schema = z.object({
 
   CORS_ORIGINS: csv([process.env.SITE_URL]),
 
+  /*
+   * First-run bootstrap, on by default in every environment.
+   *
+   * These default to true rather than being switched on per environment because
+   * the deployment target cannot run them any other way: cPanel only starts the
+   * Node.js application, so there is no shell or npm-script button available to
+   * apply a schema change. Making the app depend on a manual step would mean the
+   * next deploy silently serves requests against a schema that is one migration
+   * behind.
+   *
+   * Both steps are idempotent, and the migration step is serialised with a MySQL
+   * advisory lock so the several Passenger processes that start together cannot
+   * run the same migration at once. See config/bootstrap.js.
+   *
+   * Turning AUTO_MIGRATE off is only sensible for a host where a human *can* run
+   * `npm run migrate` deliberately — a staging box, say. On this host, off means
+   * the schema is never updated.
+   */
+  AUTO_MIGRATE: booleanish.default('true'),
+  AUTO_SEED: booleanish.default('true'),
+
   RATE_LIMIT_WINDOW_MS: numericString(900000),
-  RATE_LIMIT_MAX: numericString(300),
+  // Per 15 minutes, and it now covers only the anonymous public surface — see the
+  // note where it is mounted in app.js. One public page view fans out into
+  // roughly eight API calls (company, services, portfolio, team, testimonials,
+  // clients, blog, taxonomy), and in this deployment every one of them shares a
+  // single key because they all arrive over loopback. At 300 the budget was
+  // about 37 page views for the whole site, which a single busy visitor could
+  // exhaust. Sized for browsing, not to make the limit unreachable.
+  RATE_LIMIT_MAX: numericString(1200),
   RATE_LIMIT_AUTH_MAX: numericString(10),
   RATE_LIMIT_CONTACT_MAX: numericString(5),
+  // Password recovery. Generous, because this limiter sees one shared bucket
+  // for the whole site; the per-account limits are what actually constrain it.
+  RATE_LIMIT_PASSWORD_RESET_MAX: numericString(20),
 
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   MEDIA_ROOT: z.string().default('./storage/media'),
   MEDIA_PUBLIC_URL: z.string().default('/media'),
   MEDIA_MAX_BYTES: numericString(10485760),
-  MEDIA_ALLOWED_TYPES: csv(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif']),
+  MEDIA_ALLOWED_TYPES: csv([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/avif',
+    'image/gif',
+    // Audio, for the Telegram auto-reply voice messages. Stored as uploaded.
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/x-m4a',
+    'audio/aac',
+    'audio/ogg',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/webm',
+    'audio/flac',
+  ]),
 
   STORAGE_BUCKET: z.string().optional(),
   STORAGE_REGION: z.string().optional(),
@@ -117,6 +176,55 @@ const schema = z.object({
   ACTIVITY_RETENTION_DAYS: numericString(365),
   BACKUP_DIR: z.string().default('./storage/backups'),
   BACKUP_RETENTION_COUNT: numericString(14),
+
+  /*
+   * Telegram bot.
+   *
+   * Off by default so a deployment without a bot is not broken by its absence:
+   * every code path checks `TELEGRAM_ENABLED` first and no-ops otherwise. When
+   * on, the webhook secret is required — it is what stops a stranger who finds
+   * the webhook URL from driving the bot.
+   */
+  TELEGRAM_ENABLED: booleanish.default('false'),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_BOT_USERNAME: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  TELEGRAM_WEBHOOK_URL: z.string().optional(),
+  TELEGRAM_ANNOUNCE_CHAT_ID: z.string().optional(),
+  TELEGRAM_LINK_CODE_TTL_MINUTES: numericString(30),
+  /**
+   * How long to wait for the Telegram API.
+   *
+   * Generous on purpose. The API is not always close by — from a slow
+   * connection it can take eight seconds to answer, and a ten-second deadline
+   * turns that into a failed delivery and a lost password-reset code. The
+   * outbox retries, but a code that arrives after its own lifetime is a code
+   * the person cannot use.
+   */
+  TELEGRAM_API_TIMEOUT_MS: numericString(30000),
+  /**
+   * Optional dedicated key for encrypting stored Telegram bot tokens and
+   * personal-account sessions. Falls back to JWT_SECRET so an existing
+   * deployment keeps working without a new variable.
+   */
+  TELEGRAM_AUTO_REPLY_KEY: z.string().optional(),
+
+  /*
+   * Password recovery.
+   *
+   * A reset code is delivered over Telegram, so it is short-lived and
+   * single-use. These limits are the real defence, and they are per-account
+   * rather than per-IP on purpose: in this deployment every request reaches
+   * the API over loopback, so the in-memory rate limiter sees one shared
+   * bucket for the whole site and can only ever be a blunt instrument.
+   *
+   * A six-digit code has a million possible values, which is why the attempt
+   * cap matters — without it the code could be guessed inside its lifetime.
+   */
+  PASSWORD_RESET_CODE_TTL_MINUTES: numericString(10),
+  PASSWORD_RESET_MAX_ATTEMPTS: numericString(5),
+  PASSWORD_RESET_MAX_SENDS_PER_HOUR: numericString(3),
+  PASSWORD_RESET_RESEND_SECONDS: numericString(60),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -186,6 +294,12 @@ if (env.isProduction) {
   }
   if (env.STORAGE_DRIVER === 's3' && (!env.STORAGE_BUCKET || !env.STORAGE_ACCESS_KEY)) {
     problems.push('STORAGE_DRIVER=s3 requires STORAGE_BUCKET and STORAGE_ACCESS_KEY');
+  }
+  if (env.TELEGRAM_ENABLED) {
+    if (!env.TELEGRAM_BOT_TOKEN) problems.push('TELEGRAM_ENABLED requires TELEGRAM_BOT_TOKEN');
+    if (!env.TELEGRAM_WEBHOOK_SECRET) {
+      problems.push('TELEGRAM_ENABLED requires TELEGRAM_WEBHOOK_SECRET (guards the public webhook)');
+    }
   }
 
   if (problems.length) {

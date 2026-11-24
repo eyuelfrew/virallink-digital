@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "435437497655",
+    "project_id": "virallink-digital",
+    "storage_bucket": "virallink-digital.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:435437497655:android:371d342e51ba9fc7c73eb2",
+        "android_client_info": {
+          "package_name": "com.virallink.virallink_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD1pVJBeZhqXqCpL6QILBJAlBYAX2kNtg4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

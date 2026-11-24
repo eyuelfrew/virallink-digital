@@ -3,11 +3,25 @@ import AppError from '../utils/AppError.js';
 import { validate } from './validate.js';
 import {
   changePasswordSchema,
+  changeHandlesSchema,
+  sendNotificationSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  resetUserPasswordSchema,
   loginSchema,
   paginationQuerySchema,
   makeListQuerySchema,
   upsertCompanySchema,
   upsertEmployeeSchema,
+  updateEmployeeSchema,
+  updateClientSchema,
+  updateServiceSchema,
+  updateProjectSchema,
+  updateShareholderSchema,
+  updateBlogPostSchema,
+  updateTestimonialSchema,
+  updateCompanyStatSchema,
+  updateJobSchema,
   upsertShareholderSchema,
   upsertClientSchema,
   clientNoteSchema,
@@ -18,6 +32,8 @@ import {
   updateInquirySchema,
   upsertTransactionSchema,
   upsertInvoiceSchema,
+  updateTransactionSchema,
+  updateInvoiceSchema,
   upsertPaymentSchema,
   upsertFinancialCategorySchema,
   upsertTestimonialSchema,
@@ -25,10 +41,55 @@ import {
   upsertJobSchema,
   upsertSocialLinkSchema,
   upsertDepartmentSchema,
+  createUserSchema,
+  updateUserSchema,
+  upsertTaskSchema,
+  updateTaskSchema,
+  listTasksQuerySchema,
+  taskPerformanceQuerySchema,
+  upsertDeliverableSchema,
+  updateDeliverableSchema,
+  upsertMetricSchema,
+  listDeliverablesQuerySchema,
+  reportQuerySchema,
+  setupAdminSchema,
+  updateContentItemSchema,
+  moveStageSchema,
+  upsertProposalSchema,
+  updateProposalSchema,
+  weeklyReportQuerySchema,
   updateMediaSchema,
   reorderSchema,
+  clearActivitySchema,
   publicContactSchema,
-} from '@virallink/shared/schemas';
+  telegramConnectSchema,
+  telegramSettingsSchema,
+  telegramCatalogSchema,
+  updateTelegramCatalogSchema,
+  telegramConversationQuerySchema,
+  telegramCatalogQuerySchema,
+  telegramActiveSchema,
+  telegramAccountConfigSchema,
+  telegramAccountCodeSchema,
+  telegramAccountPasswordSchema,
+  telegramRuleSchema,
+  updateTelegramRuleSchema,
+  telegramTestMessageSchema,
+  telegramChatSwitchSchema,
+  telegramMenuButtonSchema,
+  updateTelegramMenuButtonSchema,
+  telegramConversationUpdateSchema,
+  chatCreateSchema,
+  chatMessagesQuerySchema,
+  chatSendSchema,
+  chatEditSchema,
+  chatReadSchema,
+  chatReactionSchema,
+  chatSearchQuerySchema,
+  chatLinkPreviewQuerySchema,
+  chatPinSchema,
+  chatMuteSchema,
+} from '../shared/schemas.js';
 
 /**
  * Route validation schemas.
@@ -40,6 +101,16 @@ import {
 
 const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
+});
+
+/** Rule routes carry two ids; params validation replaces the whole object. */
+const telegramRuleParamSchema = idParamSchema.extend({
+  ruleId: z.coerce.number().int().positive(),
+});
+
+/** Menu button routes carry the account id and the button id. */
+const telegramMenuButtonParamSchema = idParamSchema.extend({
+  buttonId: z.coerce.number().int().positive(),
 });
 
 /** Read an id from the params after validation, rejecting anything non-numeric. */
@@ -56,7 +127,7 @@ export function idFrom(request) {
  * handler never has to care which one applies.
  */
 export function query(request) {
-  return request.validatedQuery || query(request);
+  return request.validatedQuery || request.query || {};
 }
 
 const OPTIONAL_BOOLEAN = z
@@ -72,6 +143,11 @@ export const schemas = {
   /* Auth */
   login: { source: 'body', schema: loginSchema },
   changePassword: { source: 'body', schema: changePasswordSchema },
+  changeHandles: { source: 'body', schema: changeHandlesSchema },
+  sendNotification: { source: 'body', schema: sendNotificationSchema },
+  forgotPassword: { source: 'body', schema: forgotPasswordSchema },
+  resetPassword: { source: 'body', schema: resetPasswordSchema },
+  resetUserPassword: { source: 'body', schema: resetUserPasswordSchema },
 
   /* Generic list */
   pagination: { source: 'query', schema: paginationQuerySchema },
@@ -89,6 +165,7 @@ export const schemas = {
     }),
   },
   upsertEmployee: { source: 'body', schema: upsertEmployeeSchema },
+  updateEmployee: { source: 'body', schema: updateEmployeeSchema },
   reorderEmployees: { source: 'body', schema: reorderSchema },
 
   /* Shareholders */
@@ -99,6 +176,7 @@ export const schemas = {
     }),
   },
   upsertShareholder: { source: 'body', schema: upsertShareholderSchema },
+  updateShareholder: { source: 'body', schema: updateShareholderSchema },
 
   /* Clients */
   listClients: {
@@ -109,6 +187,7 @@ export const schemas = {
     }),
   },
   upsertClient: { source: 'body', schema: upsertClientSchema },
+  updateClient: { source: 'body', schema: updateClientSchema },
   clientNote: { source: 'body', schema: clientNoteSchema },
   clientCommunication: {
     source: 'body',
@@ -128,6 +207,7 @@ export const schemas = {
     }),
   },
   upsertService: { source: 'body', schema: upsertServiceSchema },
+  updateService: { source: 'body', schema: updateServiceSchema },
   reorderServices: { source: 'body', schema: reorderSchema },
 
   /* Projects */
@@ -140,6 +220,7 @@ export const schemas = {
     }),
   },
   upsertProject: { source: 'body', schema: upsertProjectSchema },
+  updateProject: { source: 'body', schema: updateProjectSchema },
   reorderProjects: { source: 'body', schema: reorderSchema },
 
   /* Blog */
@@ -150,6 +231,7 @@ export const schemas = {
     }),
   },
   upsertPost: { source: 'body', schema: upsertBlogPostSchema },
+  updatePost: { source: 'body', schema: updateBlogPostSchema },
   upsertTaxonomy: { source: 'body', schema: upsertBlogTaxonomySchema },
 
   /* Inquiries */
@@ -184,16 +266,10 @@ export const schemas = {
   },
   upsertTransaction: { source: 'body', schema: upsertTransactionSchema },
   upsertInvoice: { source: 'body', schema: upsertInvoiceSchema },
+  updateTransaction: { source: 'body', schema: updateTransactionSchema },
+  updateInvoice: { source: 'body', schema: updateInvoiceSchema },
   upsertPayment: { source: 'body', schema: upsertPaymentSchema },
   upsertFinancialCategory: { source: 'body', schema: upsertFinancialCategorySchema },
-  financeReport: {
-    source: 'query',
-    schema: z.object({
-      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
-      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
-      type: z.enum(['income', 'expense']).optional(),
-    }),
-  },
 
   /* Activity */
   listActivity: {
@@ -206,6 +282,7 @@ export const schemas = {
       to: z.string().datetime().or(z.string().date()).optional(),
     }),
   },
+  clearActivity: { source: 'query', schema: clearActivitySchema },
 
   /* Media */
   listMedia: {
@@ -220,8 +297,32 @@ export const schemas = {
   upsertTestimonial: { source: 'body', schema: upsertTestimonialSchema },
   upsertStat: { source: 'body', schema: upsertCompanyStatSchema },
   upsertJob: { source: 'body', schema: upsertJobSchema },
+  updateTestimonial: { source: 'body', schema: updateTestimonialSchema },
+  updateStat: { source: 'body', schema: updateCompanyStatSchema },
+  updateJob: { source: 'body', schema: updateJobSchema },
   upsertDepartment: { source: 'body', schema: upsertDepartmentSchema },
   listTestimonials: { source: 'query', schema: paginationQuerySchema },
+  createUser: { source: 'body', schema: createUserSchema },
+  // Creating an employee profile for an existing account reuses the employee
+  // body, so the write is validated against exactly the employee columns.
+  createEmployeeForUser: { source: 'body', schema: upsertEmployeeSchema },
+  upsertTask: { source: 'body', schema: upsertTaskSchema },
+  updateTask: { source: 'body', schema: updateTaskSchema },
+  listTasks: { source: 'query', schema: listTasksQuerySchema },
+  taskPerformance: { source: 'query', schema: taskPerformanceQuerySchema },
+  upsertDeliverable: { source: 'body', schema: upsertDeliverableSchema },
+  updateDeliverable: { source: 'body', schema: updateDeliverableSchema },
+  upsertMetric: { source: 'body', schema: upsertMetricSchema },
+  listDeliverables: { source: 'query', schema: listDeliverablesQuerySchema },
+  report: { source: 'query', schema: reportQuerySchema },
+  setupAdmin: { source: 'body', schema: setupAdminSchema },
+  updateContentItem: { source: 'body', schema: updateContentItemSchema },
+  moveStage: { source: 'body', schema: moveStageSchema },
+  upsertProposal: { source: 'body', schema: upsertProposalSchema },
+  updateProposal: { source: 'body', schema: updateProposalSchema },
+  weeklyReport: { source: 'query', schema: weeklyReportQuerySchema },
+  updateUser: { source: 'body', schema: updateUserSchema },
+  listUsers: { source: 'query', schema: paginationQuerySchema },
   listJobs: {
     source: 'query',
     schema: paginationQuerySchema.extend({ isPublished: OPTIONAL_BOOLEAN }),
@@ -247,7 +348,40 @@ export const schemas = {
   },
   publicContact: { source: 'body', schema: publicContactSchema },
 
+  /* Telegram auto-reply */
+  telegramConnect: { source: 'body', schema: telegramConnectSchema },
+  telegramSettings: { source: 'body', schema: telegramSettingsSchema },
+  telegramCatalog: { source: 'body', schema: telegramCatalogSchema },
+  updateTelegramCatalog: { source: 'body', schema: updateTelegramCatalogSchema },
+  telegramConversations: { source: 'query', schema: telegramConversationQuerySchema },
+  telegramCatalogList: { source: 'query', schema: telegramCatalogQuerySchema },
+  telegramActive: { source: 'body', schema: telegramActiveSchema },
+  telegramAccountConfig: { source: 'body', schema: telegramAccountConfigSchema },
+  telegramAccountCode: { source: 'body', schema: telegramAccountCodeSchema },
+  telegramAccountPassword: { source: 'body', schema: telegramAccountPasswordSchema },
+  telegramRule: { source: 'body', schema: telegramRuleSchema },
+  updateTelegramRule: { source: 'body', schema: updateTelegramRuleSchema },
+  telegramTestMessage: { source: 'body', schema: telegramTestMessageSchema },
+  telegramChatSwitch: { source: 'body', schema: telegramChatSwitchSchema },
+  telegramMenuButton: { source: 'body', schema: telegramMenuButtonSchema },
+  updateTelegramMenuButton: { source: 'body', schema: updateTelegramMenuButtonSchema },
+  telegramConversationUpdate: { source: 'body', schema: telegramConversationUpdateSchema },
+
+  /* User chat */
+  chatCreate: { source: 'body', schema: chatCreateSchema },
+  chatMessagesQuery: { source: 'query', schema: chatMessagesQuerySchema },
+  chatSend: { source: 'body', schema: chatSendSchema },
+  chatEdit: { source: 'body', schema: chatEditSchema },
+  chatRead: { source: 'body', schema: chatReadSchema },
+  chatReaction: { source: 'body', schema: chatReactionSchema },
+  chatSearchQuery: { source: 'query', schema: chatSearchQuerySchema },
+  chatLinkPreviewQuery: { source: 'query', schema: chatLinkPreviewQuerySchema },
+  chatPin: { source: 'body', schema: chatPinSchema },
+  chatMute: { source: 'body', schema: chatMuteSchema },
+
   idParam: { source: 'params', schema: idParamSchema },
+  telegramRuleParams: { source: 'params', schema: telegramRuleParamSchema },
+  telegramMenuButtonParams: { source: 'params', schema: telegramMenuButtonParamSchema },
 };
 
 /** Shorthand: validate(source, schema) → middleware. */

@@ -21,6 +21,13 @@ import {
   EMPLOYMENT_STATUS,
   SHAREHOLDER_STATUS,
   SHARE_CLASS,
+  TASK_STATUS,
+  TASK_PRIORITY,
+  DELIVERABLE_TYPE,
+  METRIC_PLATFORM,
+  METRIC_SOURCE,
+  CONTENT_STAGE,
+  PROPOSAL_STATUS,
   valuesOf,
 } from './enums.js';
 
@@ -135,32 +142,95 @@ export const makeListQuerySchema = (allowedSorts) =>
 /* -------------------------------------------------------------------------- */
 
 export const loginSchema = z.object({
-  email: emailSchema,
+  identifier: z.string().trim().min(1, 'Enter your email, username or phone').max(191).optional(),
+  email: emailSchema.optional(),
   // Deliberately permissive: login must not leak password-policy rules, and the
   // strength check only applies when *changing* a password.
   password: z.string().min(1, 'Password is required').max(200),
-});
+}).refine((v) => v.identifier || v.email, 'Enter your email, username or phone');
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required').max(200),
   newPassword: passwordSchema,
 });
 
+/**
+ * Password recovery.
+ *
+ * The code is six digits, delivered over Telegram. It is short enough to read
+ * off a phone screen and type into a browser, which is why the service — not
+ * this schema — caps how many times a code may be tried and how often one may
+ * be sent.
+ */
+export const forgotPasswordSchema = z.object({
+  email: emailSchema,
+});
+
+export const resetPasswordSchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from Telegram'),
+  newPassword: passwordSchema,
+});
+
+/**
+ * An administrator setting somebody else's password.
+ *
+ * `password` is optional: omit it and the API generates a strong temporary one
+ * and returns it, which is safer than an administrator picking "password123"
+ * while handing credentials over a phone call.
+ *
+ * `mustChangePassword` forces the holder to choose their own at the next
+ * sign-in, which is what makes it safe to hand a temporary password out.
+ */
+export const resetUserPasswordSchema = z.object({
+  password: passwordSchema.optional(),
+  mustChangePassword: z.boolean().default(true),
+});
+
 export const createUserSchema = z.object({
   name: trimmed(120),
-  email: emailSchema,
+  email: emailSchema.optional(),
+  username: z.string().trim().toLowerCase().max(64).optional(),
+  phone: z.string().trim().max(60).optional(),
   password: passwordSchema,
   role: z.enum(valuesOf(ROLES)),
   isActive: z.boolean().default(true),
-});
+  /**
+   * Optional link to the employee record this account signs in as. Nullable:
+   * administrators typically have no employee profile, and "My tasks" simply
+   * reports the account as unlinked until one is chosen.
+   */
+  employeeId: idSchema.nullable().optional(),
+}).refine(
+  (v) => v.email || v.username || v.phone,
+  'An account needs at least one of email, username or phone',
+);
 
 export const updateUserSchema = z
   .object({
     name: trimmed(120).optional(),
     email: emailSchema.optional(),
+    username: z.string().trim().toLowerCase().max(64).nullable().optional(),
+    phone: z.string().trim().max(60).nullable().optional(),
     password: passwordSchema.optional(),
+    /** Force the holder to choose a password of their own at the next sign-in. */
+    mustChangePassword: z.boolean().optional(),
+    /**
+     * The person's Telegram username, without the @. Registering it is what
+     * lets them recover their password over Telegram before they have linked
+     * an account: the bot sends a reset code only to a chat whose username
+     * matches this one.
+     */
+    telegramUsername: z.string().trim().max(64).optional(),
+    /**
+     * The person's Telegram chat id. Setting it means the bot can deliver to
+     * them directly, which is what a password-reset code needs. `null` unlinks
+     * it.
+     */
+    telegramChatId: z.coerce.number().int().positive().nullable().optional(),
     role: z.enum(valuesOf(ROLES)).optional(),
     isActive: z.boolean().optional(),
+    employeeId: idSchema.nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one field to update');
 
@@ -256,6 +326,177 @@ export const upsertClientSchema = z.object({
 
 export const clientNoteSchema = z.object({
   body: trimmed(4000),
+});
+
+/* -------------------------------------------------------------------------- */
+/* First-run setup                                                            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Creating the very first administrator. Identical requirements to
+ * createUserSchema, and deliberately so: a password too weak for the admin form
+ * must not be creatable through the setup form either.
+ */
+export const setupAdminSchema = z.object({
+  name: trimmed(120),
+  email: emailSchema,
+  password: passwordSchema,
+});
+
+/* -------------------------------------------------------------------------- */
+/* Client reporting — deliverables and monthly metrics                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Month as `YYYY-MM`.
+ *
+ * Validated as a real month rather than any 7-character string, because this is
+ * the grouping key for every roll-up in the report. A typo would silently create
+ * a second, empty bucket that then reads as "no activity that month".
+ */
+const monthSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use the format YYYY-MM');
+
+export const upsertDeliverableSchema = z.object({
+  clientId: idSchema,
+  title: trimmed(191),
+  type: z.enum(valuesOf(DELIVERABLE_TYPE)).default(DELIVERABLE_TYPE.VIDEO),
+  /** Where it went up. A URL is expected for anything actually published. */
+  platform: z.enum(valuesOf(METRIC_PLATFORM)).default(METRIC_PLATFORM.OTHER),
+  url: z.string().trim().url().optional().or(z.literal('')).nullable(),
+  publishedAt: z.coerce.date().optional().nullable(),
+  mediaId: idSchema.optional().nullable(),
+  notes: optionalText(2000),
+
+  /*
+   * Pipeline fields. The same row is both the board card and the finished-work
+   * record, so creating one has to be able to place it on the board. Omitting
+   * `stage` leaves the default of `posted`, which is right for logging work after
+   * the fact and wrong for starting a new card.
+   */
+  stage: z.enum(valuesOf(CONTENT_STAGE)).optional(),
+  shootDate: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+  scheduledFor: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+  assigneeId: z.coerce.number().int().positive().nullable().optional(),
+  idea: optionalText(4000),
+  brainstormNotes: optionalText(4000),
+  scriptBody: optionalText(8000),
+});
+
+export const updateDeliverableSchema = upsertDeliverableSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
+
+/**
+ * One month of performance for one deliverable on one platform.
+ *
+ * Counters are optional and nullable rather than defaulting to 0, so the report
+ * can distinguish "we did not measure this" from "it genuinely was zero" — the
+ * difference matters the moment a client asks why a figure is blank.
+ */
+export const upsertMetricSchema = z.object({
+  deliverableId: idSchema,
+  month: monthSchema,
+  platform: z.enum(valuesOf(METRIC_PLATFORM)).default(METRIC_PLATFORM.OTHER),
+  views: z.coerce.number().int().min(0).optional().nullable(),
+  likes: z.coerce.number().int().min(0).optional().nullable(),
+  comments: z.coerce.number().int().min(0).optional().nullable(),
+  shares: z.coerce.number().int().min(0).optional().nullable(),
+  watchHours: z.coerce.number().min(0).optional().nullable(),
+  source: z.enum(valuesOf(METRIC_SOURCE)).default(METRIC_SOURCE.MANUAL),
+});
+
+export const updateMetricSchema = upsertMetricSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
+
+export const listDeliverablesQuerySchema = paginationQuerySchema.extend({
+  month: monthSchema.optional(),
+  type: z.enum(valuesOf(DELIVERABLE_TYPE)).optional(),
+  platform: z.enum(valuesOf(METRIC_PLATFORM)).optional(),
+  // Without this key Zod strips `clientId` from the query, so the service never
+  // sees it and the client detail page would show every client's content.
+  clientId: z.coerce.number().int().positive().optional(),
+});
+
+export const reportQuerySchema = z.object({
+  /** Defaults to the current month when omitted. */
+  month: monthSchema.optional(),
+  /** How many trailing months to include for the trend line. */
+  months: z.coerce.number().int().min(1).max(12).default(6),
+});
+
+/* -------------------------------------------------------------------------- */
+/* Content production pipeline                                                 */
+/* -------------------------------------------------------------------------- */
+
+export const updateContentItemSchema = z
+  .object({
+    title: trimmed(191).optional(),
+    type: z.enum(valuesOf(DELIVERABLE_TYPE)).optional(),
+    platform: z.enum(valuesOf(METRIC_PLATFORM)).optional(),
+    url: z.string().trim().url().optional().or(z.literal('')).nullable(),
+    stage: z.enum(valuesOf(CONTENT_STAGE)).optional(),
+    // Empty date inputs submit '', which is not a date. Accepted and turned into
+    // null so a date can be cleared from the form.
+    shootDate: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+    scheduledFor: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+    publishedAt: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+    assigneeId: z.coerce.number().int().positive().nullable().optional(),
+    revisionCount: z.coerce.number().int().min(0).nullable().optional(),
+    idea: optionalText(4000),
+    brainstormNotes: optionalText(4000),
+    scriptBody: optionalText(8000),
+    approvalNotes: optionalText(4000),
+    notes: optionalText(4000),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
+
+/**
+ * Moving a card.
+ *
+ * `note` is required only when the move represents work coming *back* from the
+ * client. A rejection with no reason is the single most useless thing that can be
+ * recorded, and requiring the reason is what makes the revision history worth
+ * reading later.
+ */
+export const moveStageSchema = z
+  .object({
+    stage: z.enum(valuesOf(CONTENT_STAGE)),
+    note: optionalText(2000),
+    /** Set when sending to the client for the first time. */
+    sentForApproval: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.stage === CONTENT_STAGE.REVISION && !value.note) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['note'],
+        message: 'Say what needs changing — a rejection without a reason cannot be acted on',
+      });
+    }
+  });
+
+export const upsertProposalSchema = z.object({
+  clientId: idSchema,
+  title: trimmed(191),
+  summary: optionalText(4000),
+  scope: optionalText(2000),
+  status: z.enum(valuesOf(PROPOSAL_STATUS)).default(PROPOSAL_STATUS.DRAFT),
+  value: moneyInputSchema.optional().nullable(),
+  proposedStart: z.union([z.coerce.date(), z.literal('')]).nullable().optional(),
+});
+
+export const updateProposalSchema = upsertProposalSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
+
+export const weeklyReportQuerySchema = z.object({
+  /** Any date inside the week; the service snaps it to that week's Monday. */
+  week: z.string().trim().optional(),
+  clientId: z.coerce.number().int().positive().optional(),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -488,6 +729,48 @@ export const upsertDepartmentSchema = z.object({
   name: trimmed(120),
   description: optionalText(500),
   displayOrder: z.coerce.number().int().min(0).max(10000).default(0),
+});
+
+/* -------------------------------------------------------------------------- */
+/* Tasks (internal — never exposed on the public site)                         */
+/* -------------------------------------------------------------------------- */
+
+export const upsertTaskSchema = z.object({
+  title: trimmed(200),
+  description: optionalText(4000),
+  status: z.enum(valuesOf(TASK_STATUS)).default(TASK_STATUS.TODO),
+  priority: z.enum(valuesOf(TASK_PRIORITY)).default(TASK_PRIORITY.MEDIUM),
+  // Optional links into the rest of the platform so a task can point at the work
+  // it concerns. All optional, because a task is also a standalone reminder.
+  assigneeId: z.coerce.number().int().min(1).nullable().optional(),
+  clientId: z.coerce.number().int().min(1).nullable().optional(),
+  projectId: z.coerce.number().int().min(1).nullable().optional(),
+  dueDate: z.coerce.date().nullable().optional(),
+});
+
+export const updateTaskSchema = z
+  .object({
+    title: trimmed(200).optional(),
+    description: optionalText(4000),
+    status: z.enum(valuesOf(TASK_STATUS)).optional(),
+    priority: z.enum(valuesOf(TASK_PRIORITY)).optional(),
+    assigneeId: z.coerce.number().int().min(1).nullable().optional(),
+    clientId: z.coerce.number().int().min(1).nullable().optional(),
+    projectId: z.coerce.number().int().min(1).nullable().optional(),
+    dueDate: z.coerce.date().nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update');
+
+export const listTasksQuerySchema = paginationQuerySchema.extend({
+  status: z.enum(valuesOf(TASK_STATUS)).optional(),
+  priority: z.enum(valuesOf(TASK_PRIORITY)).optional(),
+  assigneeId: z.coerce.number().int().min(1).optional(),
+  // Lets the board request everything unfinished without enumerating the open
+  // statuses on the client, where the list would drift from the enum.
+  openOnly: z
+    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+    .transform((value) => value === true || value === 'true' || value === '1')
+    .optional(),
 });
 
 /* -------------------------------------------------------------------------- */

@@ -1,5 +1,8 @@
 import fs from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { createGzip } from 'node:zlib';
 import { spawn } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 
 /**
@@ -45,35 +48,54 @@ export async function runBackup({ outDir, database, host, port, user, password, 
     database,
   ];
 
-  await new Promise((resolve, reject) => {
-    const dump = spawn(binary, args, {
-      env: { ...process.env, MYSQL_PWD: password },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+const dump = spawn(binary, args, {
+    env: { ...process.env, MYSQL_PWD: password },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
-    // gzip on stdin → .sql.gz on stdout. Compressed because cPanel storage is
-    // small and a full dump is rarely needed uncompressed.
-    const gzip = spawn('gzip', ['-9'], { stdio: ['pipe', 'pipe', 'inherit'] });
-    const out = require('node:fs').createWriteStream(outFile);
+  const out = createWriteStream(outFile);
 
-    let stderr = '';
-    dump.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
+  let stderr = '';
+  dump.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
 
-    dump.stdout.pipe(gzip.stdin);
-    gzip.stdout.pipe(out);
+  /*
+   * Compression uses Node's own zlib rather than piping into the `gzip` binary.
+   *
+   * Two reasons. `gzip` is a Unix tool, so the script could not be run on the
+   * Windows development machine at all — which meant a backup script nobody could
+   * test locally. And a spawned `gzip` cannot be reasoned about: this version
+   * resolved on the *output stream finishing*, which also happens when the dump
+   * dies, because the pipe closes cleanly on EOF. A failed mysqldump therefore
+   * produced a truncated, near-empty .sql.gz and reported success — the single
+   * worst failure mode a backup can have, because it is silent.
+   *
+   * Now the dump's exit code is checked first, and only a clean exit lets the
+   * compression finish resolve. A partial file is deleted rather than kept.
+   */
+  const compress = createGzip({ level: 9 });
 
+  const compressing = pipeline(dump.stdout, compress, out);
+
+  const dumpExit = new Promise((resolve, reject) => {
     dump.on('error', reject);
-    gzip.on('error', reject);
-
-    out.on('finish', () => resolve());
-    out.on('error', reject);
-
     dump.on('close', (code) => {
       if (code !== 0) reject(new Error(`mysqldump exited ${code}: ${stderr.trim()}`));
+      else resolve();
     });
   });
+
+try {
+    // Both must succeed: the dump has to have exited cleanly, and the
+    // compression has to have flushed the whole thing to disk.
+    await Promise.all([dumpExit, compressing]);
+  } catch (error) {
+    // Never leave a partial file behind. A truncated dump is worse than no dump,
+    // because it looks like a backup and restores to an empty database.
+    await fs.unlink(outFile).catch(() => {});
+    throw error;
+  }
 
   const { size } = await fs.stat(outFile);
 
@@ -89,7 +111,7 @@ export async function runBackup({ outDir, database, host, port, user, password, 
     removed.push(stale);
   }
 
-  return { file: outFile, size, removed, gzipAvailable: true };
+  return { file: outFile, size, removed };
 }
 
 // Run directly: node src/scripts/backup.js

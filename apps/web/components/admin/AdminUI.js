@@ -88,6 +88,40 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'default', hre
   return <div className="rounded-lg border border-line bg-surface p-5">{content}</div>;
 }
 
+/** Horizontal section switcher used to break long settings pages into tabs. */
+export function Tabs({ items, value, onChange, label = 'Sections', className }) {
+  return (
+    <div
+      role="tablist"
+      aria-label={label}
+      className={cn('flex gap-1 overflow-x-auto rounded-lg border border-line bg-surface p-1', className)}
+    >
+      {items.map(({ id, label: itemLabel, icon: Icon }) => {
+        const selected = value === id;
+
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(id)}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors',
+              selected
+                ? 'bg-brand-500 text-white shadow-sm'
+                : 'text-ink-soft hover:bg-surface-muted hover:text-ink',
+            )}
+          >
+            {Icon ? <Icon className="size-4" aria-hidden="true" /> : null}
+            {itemLabel}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Toolbar above a table: search, filters, actions. */
 export function Toolbar({ children, className }) {
   return (

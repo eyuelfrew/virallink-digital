@@ -2,9 +2,40 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { Sequelize } from 'sequelize';
 import env from './env.js';
 import logger from './logger.js';
 import sequelize from './database.js';
+
+/**
+ * First-run bootstrap: bring the schema up to date, then seed reference data.
+ *
+ * This exists because of a deployment constraint, not a preference. The app is
+ * hosted on cPanel, where the only thing that can be started is the Node.js
+ * application itself — there is no shell, no cron and no "Run NPM Script" button
+ * available on every host. So schema changes and seeding cannot be a manual step
+ * someone remembers to run; they have to happen when the app boots.
+ *
+ * Both steps are idempotent, which is what makes that safe to do on every boot:
+ *
+ *   - a migration runs exactly once, then its filename is recorded in the
+ *     SequelizeMeta table that sequelize-cli also reads and writes;
+ *   - the seeder upserts, so re-running updates rows rather than duplicating them.
+ *
+ * `npm run migrate` and `npm run seed` remain available and reach the same end
+ * state. They are a convenience for a developer, not a deployment step.
+ *
+ * Nothing here is destructive: no migration drops a populated table, and the
+ * seeder contains no sample business data — no clients, employees, testimonials
+ * or statistics. Everything public is entered by an administrator.
+ *
+ * On concurrency: Passenger starts several processes for one application, and
+ * they will all execute this file at once on a deploy. Two processes running the
+ * same migration simultaneously is how a schema gets corrupted, so the schema
+ * bootstrap (migrations and seeding) is serialised with a MySQL advisory lock.
+ * The second process waits, then finds nothing pending. On shared hosting this
+ * is the difference between a routine restart and an outage.
+ */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -12,39 +43,77 @@ const require = createRequire(import.meta.url);
 const MIGRATIONS_DIR = path.resolve(here, '../migrations');
 const SEEDERS_DIR = path.resolve(here, '../seeders');
 
-/**
- * First-run bootstrap: bring the schema up to date, then seed reference data.
- *
- * Both steps run from server.js during boot so a fresh clone needs no manual
- * command before the first request. Both are idempotent:
- *
- *   - a migration runs exactly once, then its filename is recorded in the
- *     SequelizeMeta table that sequelize-cli also reads and writes;
- *   - the seeder upserts, so re-running updates rows rather than duplicating
- *     them.
- *
- * That means `npm run migrate` and `npm run seed` remain available and produce
- * the same end state as booting the server. Nothing here is destructive: no
- * migration drops a populated table, and the seeder contains no sample company
- * data (no clients, employees, testimonials or statistics).
- *
- * Production sets AUTO_MIGRATE=false and config/env.js refuses to boot if it is
- * true there. Passenger can start several processes concurrently, and two
- * processes running the same migration at once is not safe; a MySQL advisory
- * lock serialises the attempt, but the supported production path is still
- * 'Run NPM script' -> npm run migrate, where one process runs at a time.
- */
-
 const META_TABLE = 'SequelizeMeta';
-const MIGRATION_LOCK = 'virallink_schema_migrate';
 
-/** Advisory lock name is global per MySQL server, so it is prefixed per database. */
+/** Advisory lock name is global per MySQL server, so it is suffixed per database. */
 function lockName() {
-  return `${MIGRATION_LOCK}_${env.DB_NAME}`.slice(0, 64);
+  return `virallink_schema_migrate_${env.DB_NAME}`.slice(0, 64);
+}
+
+/**
+ * Hold a MySQL advisory lock while `fn` runs, so concurrent Passenger processes
+ * cannot bootstrap the schema at the same time.
+ *
+ * The lock is acquired and released on a single pinned pool connection. This is
+ * not optional: MySQL advisory locks belong to the connection that created them,
+ * and a plain `sequelize.query()` returns its connection to the pool when the
+ * query finishes. Releasing on a different connection silently fails, leaving
+ * the lock held for the life of the process. Every later Passenger process then
+ * waits the full timeout before skipping migrations, adding 30 seconds to each
+ * boot on a deploy that starts several processes.
+ *
+ * The 30 second timeout is a backstop: if a process dies while holding the lock
+ * MySQL releases it automatically, so a crash cannot wedge the deploy
+ * permanently, but a genuinely slow migration on a small shared database should
+ * not be cut off mid-statement.
+ */
+async function withMigrationLock(fn) {
+  const name = lockName();
+
+  // A second, single-connection client owns the lock. Using the main Sequelize
+  // pool would pin one of its connections for the whole migration, which
+  // deadlocks outright if an operator has set DB_POOL_MAX=1 on a small plan.
+  const lockClient = new Sequelize(env.DB_NAME, env.DB_USER, env.DB_PASSWORD, {
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    dialect: env.DB_DIALECT,
+    logging: false,
+    retry: { max: 0 },
+    pool: { max: 1, min: 0, acquire: 10000, idle: 10000 },
+    dialectOptions: { connectTimeout: 10000 },
+  });
+
+  let acquired = false;
+
+  try {
+    const [rows] = await lockClient.query('SELECT GET_LOCK(?, ?) AS acquired', {
+      replacements: [name, 30],
+    });
+    acquired = Number(rows[0].acquired) === 1;
+
+    if (!acquired) {
+      // Another process is migrating. It will apply what is pending, so there is
+      // nothing useful to do here - continue to seeding, which is upserts anyway.
+      logger.warn({ lock: name }, 'another process is bootstrapping the database; skipping migrations and seeding');
+      return { applied: [], deferred: true };
+    }
+
+    return await fn();
+  } finally {
+    if (acquired) {
+      await lockClient
+        .query('SELECT RELEASE_LOCK(?)', { replacements: [name] })
+        .catch((error) => {
+          logger.warn({ err: error.message, lock: name }, 'could not release migration lock');
+        });
+    }
+    await lockClient.close().catch(() => {});
+  }
 }
 
 async function ensureMetaTable() {
   const queryInterface = sequelize.getQueryInterface();
+
   const [rows] = await sequelize.query(
     `SELECT COUNT(*) AS found FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
@@ -68,8 +137,8 @@ async function appliedNames() {
 
 /**
  * Migration filenames are timestamp-prefixed, so lexical sort is chronological
- * order. That ordering is what sequelize-cli relies on and is preserved here so
- * the two paths cannot disagree about what "pending" means.
+ * order — the same ordering sequelize-cli relies on, which keeps the two paths
+ * from disagreeing about what "pending" means.
  */
 function migrationFiles() {
   return fs
@@ -81,9 +150,14 @@ function migrationFiles() {
 /**
  * Run any migration that has not been recorded yet.
  *
- * Deliberately not wrapped in a transaction: MySQL commits implicitly on DDL,
- * so a transaction would imply an atomicity that does not exist. This matches
+ * Deliberately not wrapped in a transaction: MySQL commits implicitly on DDL, so a
+ * transaction would imply an atomicity that does not exist. This matches
  * sequelize-cli, which also runs each migration on its own.
+ *
+ * That is also why the migration helpers tolerate an already-present column —
+ * see migration-helpers/index.cjs. Without that, a migration failing partway
+ * leaves its earlier statements behind, no SequelizeMeta row is written, and the
+ * next boot dies on "Duplicate column" with no way forward short of a shell.
  */
 export async function applyPendingMigrations() {
   const already = await appliedNames();
@@ -121,11 +195,13 @@ export async function applyPendingMigrations() {
 /**
  * Run every seeder in `src/seeders`.
  *
- * The seeder is the RBAC baseline only — permissions, the four system roles,
- * their grants, and the financial categories. It is safe on every boot.
+ * The seeder is the RBAC baseline only — permissions, the system roles,
+ * their grants, the financial categories and the company profile. It contains no
+ * business data and is safe on every boot.
  */
 export async function runSeeders() {
   const queryInterface = sequelize.getQueryInterface();
+
   const files = fs
     .readdirSync(SEEDERS_DIR)
     .filter((name) => name.endsWith('.cjs'))
@@ -149,54 +225,46 @@ export async function runSeeders() {
 }
 
 /**
- * Hold a MySQL advisory lock so that, if several processes do boot at once, only
- * one migrates and the rest wait and then find nothing pending. Thirty seconds
- * is long enough for the slowest migration and short enough that a crashed
- * holder does not block boot indefinitely.
- */
-async function withMigrationLock(fn) {
-  const name = lockName();
-  const [rows] = await sequelize.query('SELECT GET_LOCK(?, ?) AS acquired', {
-    replacements: [name, 30],
-  });
-
-  if (Number(rows[0].acquired) !== 1) {
-    logger.warn({ lock: name }, 'could not acquire the migration lock; another process is migrating');
-    return { applied: [], deferred: true };
-  }
-
-  try {
-    return await fn();
-  } finally {
-    await sequelize.query('SELECT RELEASE_LOCK(?)', { replacements: [name] });
-  }
-}
-
-/**
- * Boot-time entry point, called from server.js after the connection is verified.
+ * Boot-time entry point, called from server.js once the connection is verified.
  *
- * Failures are logged with the real cause and rethrown, so a broken schema stops
- * the process instead of letting the API serve 500s from missing tables.
+ * A failure here is logged with its real cause and rethrown, so a broken schema
+ * stops the process instead of letting the API start serving 500s from missing
+ * tables. On cPanel that surfaces as the app refusing to start, which is the
+ * correct and visible outcome — the alternative is a site that looks up but fails
+ * on every page, with nothing in the log to say why.
  */
 export async function bootstrapDatabase() {
   const summary = { migrated: [], seeded: [] };
 
-  if (env.AUTO_MIGRATE) {
-    logger.info('AUTO_MIGRATE is true — applying pending migrations');
-    const result = await withMigrationLock(() => applyPendingMigrations());
-    summary.migrated = result.applied || [];
-  } else {
-    logger.debug('AUTO_MIGRATE is false — skipping migrations');
+  /**
+   * Migrations and seeding share one lock. Seeding is not safe to run from two
+   * processes at once: the company profile and financial categories are read
+   * then inserted without a unique constraint, so a concurrent first boot can
+   * create duplicate rows. The second process skips the whole bootstrap; the
+   * first one owns both steps.
+   */
+  async function bootstrap() {
+    if (env.AUTO_MIGRATE) {
+      logger.info('AUTO_MIGRATE is on - applying pending migrations');
+      const result = await applyPendingMigrations();
+      summary.migrated = result.applied || [];
+    } else {
+      logger.warn('AUTO_MIGRATE is off - the schema will not be updated on boot');
+    }
+
+    if (env.AUTO_SEED) {
+      // Seeding reads from tables the migrations just created, so it has to happen
+      // after them even when the migration step was skipped or deferred.
+      logger.info('AUTO_SEED is on - seeding reference data');
+      summary.seeded = await runSeeders();
+    } else {
+      logger.warn('AUTO_SEED is off - reference data will not be seeded on boot');
+    }
   }
 
-  if (env.AUTO_SEED) {
-    // Seeding reads from tables the migrations just created, so it has to happen
-    // after them even though the lock above has already been released.
-    logger.info('AUTO_SEED is true — seeding reference data');
-    summary.seeded = await runSeeders();
-  } else {
-    logger.debug('AUTO_SEED is false — skipping seeders');
-  }
+  if (!env.AUTO_MIGRATE && !env.AUTO_SEED) return summary;
+
+  await withMigrationLock(bootstrap);
 
   return summary;
 }

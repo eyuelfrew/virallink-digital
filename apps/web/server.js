@@ -19,10 +19,44 @@
 // correct even when the variable is missing from the cPanel UI.
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 
+const path = require('node:path');
+const { loadEnvConfig } = require('@next/env');
+
+/*
+ * Next only loads .env from the web app's own directory automatically. This
+ * wrapper loads apps/web/.env explicitly before Next starts, which is what the
+ * web deployment uses (either the cPanel Environment Variables UI, or this
+ * file in the app root). The web app is independent of the API: it needs the
+ * site URL and where the API is reachable, nothing else.
+ *
+ * A repository-root .env is honoured as an optional fallback for a single-file
+ * setup, but apps/web/.env is the source of truth.
+ *
+ * Existing environment variables win: cPanel's Environment Variables UI is not
+ * overridden, because @next/env never replaces a value that is already set.
+ */
+// Like the API, the web app has its own .env. Passenger always assigns PORT;
+// capture it before loading the file, because that file would otherwise win
+// and rebind the API's port.
+const passengerPort = process.env.PORT;
+
+// Load the web app's own apps/web/.env first; a repository-root .env is a
+// fallback for a single-file setup.
+{
+  const fs = require('node:fs');
+  const webEnv = path.join(__dirname, '.env');
+  const rootEnv = path.resolve(__dirname, '../../.env');
+  if (fs.existsSync(webEnv)) {
+    loadEnvConfig(__dirname);
+  } else if (fs.existsSync(rootEnv)) {
+    loadEnvConfig(path.resolve(__dirname, '../..'));
+  }
+}
+
 const http = require('node:http');
 const next = require('next');
 
-const port = Number(process.env.PORT) || 3000;
+const port = Number(passengerPort) || 3000;
 // Loopback by default. Apache proxies to this port, so it should not be
 // reachable from the internet. Override with HOST only if a reverse proxy
 // terminates TLS in front of the app.
@@ -48,7 +82,7 @@ app
 
     let shuttingDown = false;
 
-    const shutdown = (signal) => {
+    const shutdown =signal => {
       if (shuttingDown) return;
       shuttingDown = true;
       // eslint-disable-next-line no-console
@@ -67,7 +101,7 @@ app
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   })
-  .catch((error) => {
+  .catch(error => {
     // eslint-disable-next-line no-console
     console.error('[web] failed to start:', error);
     process.exit(1);

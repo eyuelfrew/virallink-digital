@@ -71,6 +71,17 @@ const {
   Role,
   User,
   RefreshToken,
+  PasswordResetToken,
+  TelegramOutbox,
+  PushToken,
+  PushOutbox,
+  TelegramUserAccount,
+  TelegramAutoReplyAccount,
+  TelegramAutoReplySettings,
+  TelegramAutoReplyRule,
+  TelegramCatalogItem,
+  TelegramAutoReplyChatState,
+  TelegramMenuButton,
   Company,
   SocialLink,
   CompanyStat,
@@ -88,6 +99,11 @@ const {
   Technology,
   ProjectTechnology,
   Job,
+  Task,
+  ContentDeliverable,
+  ContentMetric,
+  ContentStageEvent,
+  ClientProposal,
   FinancialCategory,
   FinancialTransaction,
   Invoice,
@@ -100,6 +116,10 @@ const {
   BlogPostTag,
   ContactInquiry,
   ActivityLog,
+  Conversation,
+  ConversationMember,
+  Message,
+  MessageReaction,
 } = models;
 
 /* -------------------------------------------------------------------------- */
@@ -158,6 +178,115 @@ Role.belongsToMany(User, { ...userRolesThrough, as: 'users', foreignKey: 'roleId
 RefreshToken.belongsTo(User, { as: 'user', foreignKey: 'userId', onDelete: 'CASCADE' });
 User.hasMany(RefreshToken, { as: 'refreshTokens', foreignKey: 'userId' });
 
+// Password reset codes. Deleted with the account: a token for an account that
+// no longer exists is meaningless, and keeping it would only widen the blast
+// radius of a database copy.
+PasswordResetToken.belongsTo(User, { as: 'user', foreignKey: 'userId', onDelete: 'CASCADE' });
+User.hasMany(PasswordResetToken, { as: 'passwordResetTokens', foreignKey: 'userId' });
+
+// Outbound Telegram queue rows. SET NULL so removing a user does not erase the
+// record that a message was sent to them.
+TelegramOutbox.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+User.hasMany(TelegramOutbox, { as: 'telegramOutbox', foreignKey: 'userId' });
+User.hasMany(PushToken, { as: 'pushTokens', foreignKey: 'userId' });
+User.hasMany(PushOutbox, { as: 'pushOutbox', foreignKey: 'userId' });
+
+// A person's own Telegram login (MTProto). One per user; the credentials are
+// stored encrypted in the row, while the session lives in the runtime process.
+User.hasOne(TelegramUserAccount, {
+  as: 'telegramUserAccount',
+  foreignKey: 'userId',
+  onDelete: 'CASCADE',
+});
+TelegramUserAccount.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+
+// Auto-reply accounts. A null owner is a company-wide bot; a set owner is a bot
+// or personal account that person connected from My Telegram.
+TelegramAutoReplyAccount.belongsTo(User, { as: 'owner', foreignKey: 'ownerUserId', onDelete: 'CASCADE' });
+User.hasMany(TelegramAutoReplyAccount, {
+  as: 'telegramAutoReplyAccounts',
+  foreignKey: 'ownerUserId',
+  onDelete: 'CASCADE',
+});
+
+TelegramAutoReplyAccount.belongsTo(TelegramUserAccount, {
+  as: 'userAccount',
+  foreignKey: 'userAccountId',
+  onDelete: 'CASCADE',
+});
+TelegramUserAccount.hasOne(TelegramAutoReplyAccount, {
+  as: 'autoReplyAccount',
+  foreignKey: 'userAccountId',
+  onDelete: 'CASCADE',
+});
+
+TelegramAutoReplyAccount.hasMany(TelegramAutoReplyRule, {
+  as: 'rules',
+  foreignKey: 'accountId',
+  onDelete: 'CASCADE',
+});
+TelegramAutoReplyRule.belongsTo(TelegramAutoReplyAccount, {
+  as: 'account',
+  foreignKey: 'accountId',
+});
+
+/*
+ * The audio a rule replies with — a voice note or a sound bite.
+ *
+ * The media row is the file itself; the rule only points at it, so one
+ * recording can be reused by several rules.
+ */
+TelegramAutoReplyRule.belongsTo(Media, { as: 'audio', foreignKey: 'audioMediaId' });
+
+TelegramAutoReplyAccount.hasOne(TelegramAutoReplySettings, {
+  as: 'settings',
+  foreignKey: 'accountId',
+  onDelete: 'CASCADE',
+});
+TelegramAutoReplySettings.belongsTo(TelegramAutoReplyAccount, {
+  as: 'account',
+  foreignKey: 'accountId',
+});
+
+TelegramAutoReplyAccount.hasMany(TelegramAutoReplyChatState, {
+  as: 'chatStates',
+  foreignKey: 'accountId',
+  onDelete: 'CASCADE',
+});
+TelegramAutoReplyChatState.belongsTo(TelegramAutoReplyAccount, {
+  as: 'account',
+  foreignKey: 'accountId',
+});
+
+TelegramCatalogItem.belongsTo(Media, { as: 'image', foreignKey: 'imageMediaId' });
+
+TelegramAutoReplyAccount.hasMany(TelegramMenuButton, {
+  as: 'menuButtons',
+  foreignKey: 'accountId',
+  onDelete: 'CASCADE',
+});
+TelegramMenuButton.belongsTo(TelegramAutoReplyAccount, {
+  as: 'account',
+  foreignKey: 'accountId',
+});
+TelegramMenuButton.belongsTo(TelegramMenuButton, {
+  as: 'parent',
+  foreignKey: 'parentId',
+  onDelete: 'CASCADE',
+});
+TelegramMenuButton.hasMany(TelegramMenuButton, {
+  as: 'children',
+  foreignKey: 'parentId',
+  onDelete: 'CASCADE',
+});
+
+/*
+ * A user may be linked to the employee record they work as. This is what lets
+ * "My tasks" resolve session -> employee -> tasks.assignee_id. Optional: an
+ * administrator has a user with no employee behind it.
+ */
+User.belongsTo(Employee, { as: 'employee', foreignKey: 'employeeId' });
+
 /* -------------------------------------------------------------------------- */
 /* Company & branding                                                         */
 /* -------------------------------------------------------------------------- */
@@ -173,6 +302,17 @@ CompanyStat.belongsTo(Company, { as: 'company', foreignKey: 'companyId' });
 
 Company.belongsTo(Media, { as: 'logo', foreignKey: 'logoMediaId' });
 Company.belongsTo(Media, { as: 'favicon', foreignKey: 'faviconMediaId' });
+
+/*
+ * Who uploaded a file.
+ *
+ * The media library lists the uploader next to each image, so the association
+ * has to exist on the model — the `uploadedBy` include in the media list query
+ * fails with "User is not associated to Media!" without it, which took the
+ * whole media page down.
+ */
+Media.belongsTo(User, { as: 'uploadedBy', foreignKey: 'uploadedById' });
+User.hasMany(Media, { as: 'uploadedMedia', foreignKey: 'uploadedById' });
 
 /* -------------------------------------------------------------------------- */
 /* People                                                                     */
@@ -260,6 +400,56 @@ Job.belongsTo(Department, { as: 'department', foreignKey: 'departmentId' });
 Department.hasMany(Job, { as: 'jobs', foreignKey: 'departmentId' });
 
 /* -------------------------------------------------------------------------- */
+/* Tasks                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The optional links are resolved as associations for display, but nothing
+ * cascades: deleting a client or project must not remove the tasks that mention
+ * it. `onDelete: 'SET NULL'` keeps the join clean while the task text survives.
+ */
+Task.belongsTo(Employee, { as: 'assignee', foreignKey: 'assigneeId' });
+Task.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
+Task.belongsTo(Project, { as: 'project', foreignKey: 'projectId' });
+
+Employee.hasMany(Task, { as: 'tasks', foreignKey: 'assigneeId' });
+Client.hasMany(Task, { as: 'tasks', foreignKey: 'clientId' });
+Project.hasMany(Task, { as: 'tasks', foreignKey: 'projectId' });
+
+/* -------------------------------------------------------------------------- */
+/* Client reporting                                                            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A deliverable belongs to a client and cannot outlive one, so this cascades.
+ * Metrics hang off a deliverable and cascade with it: deleting the video should
+ * take its view counts with it rather than orphaning rows nothing will ever read.
+ */
+Client.hasMany(ContentDeliverable, { as: 'deliverables', foreignKey: 'clientId' });
+ContentDeliverable.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
+
+ContentDeliverable.hasMany(ContentMetric, { as: 'metrics', foreignKey: 'deliverableId' });
+ContentMetric.belongsTo(ContentDeliverable, { as: 'deliverable', foreignKey: 'deliverableId' });
+
+/*
+ * Stage history cascades: deleting a piece of content discards its movement log
+ * with it. That is the one place a cascade is right here, because an orphaned
+ * event row would never be read again and would quietly distort cycle-time
+ * figures for every future report.
+ */
+ContentDeliverable.hasMany(ContentStageEvent, { as: 'stageEvents', foreignKey: 'deliverableId' });
+ContentStageEvent.belongsTo(ContentDeliverable, { as: 'deliverable', foreignKey: 'deliverableId' });
+ContentStageEvent.belongsTo(User, { as: 'actor', foreignKey: 'userId' });
+
+/* The assignee is a person, not a client record, so this points at Employee. */
+ContentDeliverable.belongsTo(Employee, { as: 'assignee', foreignKey: 'assigneeId' });
+Employee.hasMany(ContentDeliverable, { as: 'contentItems', foreignKey: 'assigneeId' });
+
+/* Proposals sit upstream of the pipeline rather than inside it. */
+Client.hasMany(ClientProposal, { as: 'proposals', foreignKey: 'clientId' });
+ClientProposal.belongsTo(Client, { as: 'client', foreignKey: 'clientId' });
+
+/* -------------------------------------------------------------------------- */
 /* Finance                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -323,6 +513,28 @@ ContactInquiry.belongsTo(User, { as: 'assignedTo', foreignKey: 'assignedToId' })
 User.hasMany(ContactInquiry, { as: 'assignedInquiries', foreignKey: 'assignedToId' });
 
 ActivityLog.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+
+/* -------------------------------------------------------------------------- */
+/* User chat                                                                   */
+/* -------------------------------------------------------------------------- */
+
+Conversation.hasMany(Message, { as: 'messages', foreignKey: 'conversationId', onDelete: 'CASCADE', hooks: true });
+Message.belongsTo(Conversation, { as: 'conversation', foreignKey: 'conversationId' });
+Message.belongsTo(User, { as: 'sender', foreignKey: 'userId' });
+Conversation.hasMany(ConversationMember, { as: 'members', foreignKey: 'conversationId', onDelete: 'CASCADE' });
+ConversationMember.belongsTo(Conversation, { as: 'conversation', foreignKey: 'conversationId' });
+ConversationMember.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+User.hasMany(ConversationMember, { as: 'conversationMembers', foreignKey: 'userId' });
+User.hasMany(Message, { as: 'sentMessages', foreignKey: 'userId' });
+Message.belongsTo(Message, { as: 'replyTo', foreignKey: 'replyToId' });
+Message.belongsTo(Media, { as: 'image', foreignKey: 'imageMediaId' });
+Message.hasMany(MessageReaction, { as: 'reactions', foreignKey: 'messageId', onDelete: 'CASCADE' });
+MessageReaction.belongsTo(Message, { as: 'message', foreignKey: 'messageId' });
+MessageReaction.belongsTo(User, { as: 'user', foreignKey: 'userId' });
+
+/* -------------------------------------------------------------------------- */
+/* Leads & audit                                                               */
+/* -------------------------------------------------------------------------- */
 
 /**
  * Eager-load allowlists.

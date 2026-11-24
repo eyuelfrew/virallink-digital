@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { models } from '../models/index.js';
-import { publicContactSchema } from '@virallink/shared/schemas';
+import { publicContactSchema } from '../shared/schemas.js';
 import { hashIp } from './media.service.js';
 import { logAuth } from '../middleware/audit.js';
 import { invalidatePublicContent } from './public.service.js';

@@ -33,6 +33,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# Firebase service account (private key, never commit)
+virallink-digital-firebase-adminsdk-*.json
+
 # Test output
 coverage/
 *.lcov
@@ -40,3 +43,11 @@ coverage/
 # Build artefacts
 dist/
 *.tsbuildinfo
+
+# Local scratch files (never part of the app)
+/tmp-*
+.vl-*
+
+# Local build/deploy archives and one-off environment dumps
+*.zip
+doc_*.env

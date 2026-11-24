@@ -3,7 +3,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { EMPLOYMENT_STATUS } from '@virallink/shared/enums';
+import { PhotoField } from '@/components/admin/PhotoField';
 
 /**
  * Employee create/edit dialog.
@@ -16,7 +18,7 @@ import { EMPLOYMENT_STATUS } from '@virallink/shared/enums';
  * appears on the website, and it is easy to forget — so the field is labelled with
  * its consequence rather than as a bare checkbox.
  */
-export function EmployeeFormDialog({ employee = null, departments = [], triggerLabel = 'Add employee' }) {
+export function EmployeeFormDialog({ employee = null, departments = [], triggerLabel = 'Add employee', canUpload = true }) {
   const router = useRouter();
   const dialogRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -47,6 +49,9 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
       name: formData.get('name'),
       position: formData.get('position') || undefined,
       departmentId: formData.get('departmentId') ? Number(formData.get('departmentId')) : null,
+      // '' from the field's hidden input means "removed" and is sent as null,
+      // which the API treats as unlink rather than as "leave alone".
+      photoMediaId: formData.get('photoMediaId') ? Number(formData.get('photoMediaId')) : null,
       biography: formData.get('biography') || undefined,
       email: formData.get('email') || null,
       phone: formData.get('phone') || null,
@@ -58,9 +63,10 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/employees/${employee.id}` : '/api/employees', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/employees/${employee.id}` : '/api/employees'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -74,6 +80,7 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
       }
 
       setOpen(false);
+      setPending(false);
       // Re-render the server component so the table reflects the change.
       router.refresh();
     } catch {
@@ -137,6 +144,12 @@ export function EmployeeFormDialog({ employee = null, departments = [], triggerL
                     defaultValue={employee?.position}
                     error={fieldErrors.position?.[0]}
                   />
+                </div>
+
+                {/* Their public team photo. Uploaded straight away and stored in
+                    the media library; removing it just unlinks the person. */}
+                <div className="rounded-md border border-line p-4">
+                  <PhotoField initialMedia={employee?.photo || null} canUpload={canUpload} />
                 </div>
 
                 <div className="grid gap-5 sm:grid-cols-2">

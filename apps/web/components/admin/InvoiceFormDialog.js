@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { INVOICE_STATUS } from '@virallink/shared/enums';
 
 export function InvoiceFormDialog({ invoice = null, triggerLabel = 'Add invoice' }) {
@@ -24,7 +25,7 @@ export function InvoiceFormDialog({ invoice = null, triggerLabel = 'Add invoice'
       return;
     }
 
-    fetch('/api/clients')
+    fetch(browserApiUrl('/api/clients'), { credentials: 'include' })
       .then((r) => r.json())
       .then((d) => setClients(d.data || []))
       .catch(() => {});
@@ -83,9 +84,10 @@ export function InvoiceFormDialog({ invoice = null, triggerLabel = 'Add invoice'
     }
 
     try {
-      const response = await fetch(isEdit ? `/api/finance/invoices/${invoice.id}` : '/api/finance/invoices', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/finance/invoices/${invoice.id}` : '/api/finance/invoices'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -99,6 +101,7 @@ export function InvoiceFormDialog({ invoice = null, triggerLabel = 'Add invoice'
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

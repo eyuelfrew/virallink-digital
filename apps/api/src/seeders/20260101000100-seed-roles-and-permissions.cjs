@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Seed the RBAC baseline: permissions, the four system roles, and the
+ * Seed the RBAC baseline: permissions, the system roles, and the
  * permission grants defined in packages/shared/permissions.js.
  *
  * This is the only seeder that runs in production. It contains no fake company
@@ -13,8 +13,8 @@
  * so it is safe to run on every deploy.
  */
 
-const { PERMISSIONS, ROLE_PERMISSIONS, ROLE_LABELS } = require('@virallink/shared/permissions');
-const { ROLES, ENTITY, ACTIVITY_ACTION } = require('@virallink/shared/enums');
+const { PERMISSIONS, ROLE_PERMISSIONS, ROLE_LABELS } = require('../shared/permissions.cjs');
+const { ROLES, ENTITY, ACTIVITY_ACTION } = require('../shared/enums.cjs');
 
 /** Group permissions by their leading segment so the admin UI can group them. */
 function permissionGroup(key) {
@@ -30,6 +30,7 @@ function permissionGroup(key) {
   if (key.startsWith('testimonial')) return 'Content';
   if (key.startsWith('job')) return 'Content';
   if (key.startsWith('activity')) return 'System';
+  if (key.startsWith('notification')) return 'Notifications';
   if (key.startsWith('user')) return 'System';
   if (key.startsWith('role')) return 'System';
   if (key.startsWith('company')) return 'Settings';
@@ -52,7 +53,18 @@ const ROLE_DESCRIPTIONS = {
   [ROLES.SUPER_ADMIN]: 'Unrestricted access, including user and role management.',
   [ROLES.ADMIN]: 'Manages company content, employees, clients and public pages.',
   [ROLES.EDITOR]: 'Manages services, portfolio, blog posts and other public content.',
-  [ROLES.FINANCE]: 'Manages financial records, invoices and financial reports.',
+  [ROLES.FINANCE]: 'Manages financial records, transactions and invoices.',
+  [ROLES.SOFTWARE_ENGINEER]: 'Writes, reviews and deploys code. Manages tasks and code reviews.',
+  [ROLES.VIDEO_EDITOR]: 'Edits and produces video content. Manages video tasks and assets.',
+  [ROLES.DESIGNER]: 'Creates visual designs, graphics and UI/UX mockups.',
+  [ROLES.PROJECT_MANAGER]: 'Plans, schedules and coordinates projects. Assigns and tracks tasks.',
+  [ROLES.CONTENT_WRITER]: 'Writes and edits blog posts, articles and marketing copy.',
+  [ROLES.SOCIAL_MEDIA_MANAGER]: 'Manages social media channels, schedules posts and engages audience.',
+  [ROLES.GRAPHIC_DESIGNER]: 'Creates graphics, illustrations and visual assets.',
+  [ROLES.MOTION_DESIGNER]: 'Creates animations, motion graphics and video effects.',
+  [ROLES.COPYWRITER]: 'Writes marketing copy, ad copy and website content.',
+  [ROLES.SEO_SPECIALIST]: 'Optimizes content for search engines. Manages SEO strategy.',
+  [ROLES.MARKETING_COORDINATOR]: 'Coordinates marketing campaigns, tracks metrics and reports.',
 };
 
 module.exports = {

@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
 import AppError from './AppError.js';
-import { slugify } from '@virallink/shared/seo';
+import { slugify } from '../shared/seo.js';
 
 /**
  * Build a slug that is unique within a model.

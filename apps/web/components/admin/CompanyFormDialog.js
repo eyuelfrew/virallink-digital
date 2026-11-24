@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
+import { mapEmbedUrl, mapLinkUrl, hasCoordinates } from '@/lib/map';
+import { ExternalLink, MapPin } from 'lucide-react';
 
 export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile' }) {
   const router = useRouter();
@@ -10,6 +13,15 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+  // Keep the preview in sync with what is typed before saving.
+  const [coordinates, setCoordinates] = useState({
+    latitude: company?.latitude ?? '',
+    longitude: company?.longitude ?? '',
+  });
+
+  const previewUrl = mapEmbedUrl(coordinates);
+  const directionsUrl = mapLinkUrl(coordinates);
+  const showPreview = hasCoordinates(coordinates);
 
   useEffect(() => {
     if (!open) {
@@ -43,6 +55,9 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
       region: formData.get('region') || undefined,
       country: formData.get('country') || undefined,
       postalCode: formData.get('postalCode') || undefined,
+      // The API coerces and validates these as numbers; empty means "no pin".
+      latitude: formData.get('latitude') || null,
+      longitude: formData.get('longitude') || null,
       phone: formData.get('phone') || null,
       secondaryPhone: formData.get('secondaryPhone') || null,
       email: formData.get('email') || null,
@@ -53,8 +68,9 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
     };
 
     try {
-      const response = await fetch('/api/company', {
+      const response = await fetch(browserApiUrl('/api/company'), {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -69,6 +85,7 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');
@@ -162,6 +179,64 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
                   <Field name="addressLine1" label="Address" defaultValue={company?.addressLine1} />
                 </div>
 
+                <fieldset className="flex flex-col gap-4 rounded-md border border-line p-4">
+                  <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-ink-soft">Map location</legend>
+
+                  <p className="text-xs leading-relaxed text-ink-muted">
+                    Find your office on Google Maps, right-click the pin (or the exact spot) and choose
+                    &ldquo;What&rsquo;s here?&rdquo; to copy its coordinates. Paste the numbers below to show a map
+                    on the contact page and homepage. Leave both blank to show no map at all.
+                  </p>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field
+                      name="latitude"
+                      label="Latitude"
+                      type="number"
+                      step="any"
+                      defaultValue={company?.latitude ?? ''}
+                      error={fieldErrors.latitude?.[0]}
+                      hint="e.g. 9.002862 — up to 90"
+                      onChange={(event) => setCoordinates((c) => ({ ...c, latitude: event.target.value }))}
+                    />
+                    <Field
+                      name="longitude"
+                      label="Longitude"
+                      type="number"
+                      step="any"
+                      defaultValue={company?.longitude ?? ''}
+                      error={fieldErrors.longitude?.[0]}
+                      hint="e.g. 38.746843 — up to 180"
+                      onChange={(event) => setCoordinates((c) => ({ ...c, longitude: event.target.value }))}
+                    />
+                  </div>
+
+                  {showPreview ? (
+                    <div className="overflow-hidden rounded-md border border-line">
+                      <iframe
+                        src={previewUrl}
+                        title="Preview of the company location on a map"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                        className="block h-52 w-full border-0"
+                      />
+                    </div>
+                  ) : null}
+
+                  {directionsUrl ? (
+                    <a
+                      href={directionsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex w-fit items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline"
+                    >
+                      <MapPin className="size-3.5" aria-hidden="true" />
+                      Check this pin on Google Maps
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                    </a>
+                  ) : null}
+                </fieldset>
+
                 <Field name="openingHours" label="Opening hours" defaultValue={company?.openingHours} hint='e.g. "Mon-Fri 09:00-17:00"' />
 
                 <fieldset className="rounded-md border border-line p-4">
@@ -191,14 +266,14 @@ export function CompanyFormDialog({ company = null, triggerLabel = 'Edit profile
   );
 }
 
-function Field({ name, label, type = 'text', required, defaultValue, error, hint }) {
+function Field({ name, label, type = 'text', required, defaultValue, error, hint, onChange, step }) {
   const errorId = `${name}-error`;
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor={name} className="text-sm font-medium text-ink-soft">
         {label} {required ? <span className="text-danger">*</span> : null}
       </label>
-      <input id={name} name={name} type={type} required={required} defaultValue={defaultValue ?? ''} aria-invalid={error ? 'true' : undefined} aria-describedby={error ? errorId : undefined} className={inputClasses(Boolean(error))} />
+      <input id={name} name={name} type={type} step={step} required={required} defaultValue={defaultValue ?? ''} onChange={onChange} aria-invalid={error ? 'true' : undefined} aria-describedby={error ? errorId : undefined} className={inputClasses(Boolean(error))} />
       {error ? <p id={errorId} className="text-sm text-danger">{error}</p> : hint ? <p className="text-xs text-ink-subtle">{hint}</p> : null}
     </div>
   );

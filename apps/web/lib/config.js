@@ -15,24 +15,48 @@ export const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
 
 /**
- * Where the browser should send API requests.
+ * Browser-facing API origin. Every client-side request goes straight here —
+ * there is no Next.js route handler in the middle.
  *
- * Empty in production by design: the admin app calls its own Next.js route
- * handlers, which forward to the API server-side. That removes the CORS hop from
- * the critical path and means the API is never directly reachable from a browser.
+ * NEXT_PUBLIC_* values are inlined at build time, so changing this in cPanel
+ * alone does nothing until the app is rebuilt.
  */
-export const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_PUBLIC_URL || '';
+export const PUBLIC_API_URL =
+  process.env.NEXT_PUBLIC_API_PUBLIC_URL || 'https://api.virallinkdigital.com';
 
 /**
- * Server-to-server API base. On cPanel this is a loopback address, so calls
- * between the two apps never leave the machine.
+ * URL the browser should use for an API call, given a web-app route path like
+ * `/api/tasks/1`. That becomes `<PUBLIC_API_URL>/api/v1/tasks/1` — production
+ * uses https://api.virallinkdigital.com, local dev uses http://localhost:4000
+ * via .env.local. No Next.js route handler is involved.
+ */
+export function browserApiUrl(path) {
+  const suffix = path.replace(/^\/api\//, '');
+  return `${PUBLIC_API_URL}/api/v1/${suffix}`;
+}
+
+/**
+ * Server-to-server API base. On cPanel the API listens on loopback, so calls
+ * between the two apps never leave the machine. When the API is deployed at
+ * its own origin (e.g. https://api.virallinkdigital.com), set this to that URL.
  */
 export const INTERNAL_API_URL =
   process.env.API_INTERNAL_URL || 'http://127.0.0.1:4000';
 
+/**
+ * True when the API is reached over loopback (localhost/127.0.0.1/0.0.0.0/[::1]).
+ *
+ * The X-Forwarded-For marker the web app appends for rate-limit bucketing only
+ * makes sense when the API really is on the same machine. Public APIs sit behind
+ * Cloudflare, which rejects values containing the literal "loopback" with a
+ * 403 HTML page — so the header is omitted when the API is public instead.
+ */
+export const isLoopbackApi = (base) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(\/|$)/i.test(base);
+
 /** The admin area. Its path is deliberately not guessable-looking but is NOT a
  * security control — authentication is what protects it. */
-export const ADMIN_PATH = process.env.NEXT_PUBLIC_ADMIN_PATH || '/admin-teftef';
+export const ADMIN_PATH = process.env.NEXT_PUBLIC_ADMIN_PATH || '/vira-admin';
 
 /** Route prefixes that must never be indexed. */
 export const NOINDEX_PREFIXES = [ADMIN_PATH];

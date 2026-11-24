@@ -53,22 +53,98 @@ export const sequelize = new Sequelize(env.DB_NAME, env.DB_USER, env.DB_PASSWORD
 });
 
 /**
- * Verify connectivity at boot. On cPanel a misconfigured database user is the
- * single most common deploy failure, so fail loudly and name the cause instead
- * of starting a process that 500s on every request.
+ * Create the database if it does not exist yet.
+ *
+ * The one thing the app cannot do by connecting to `DB_NAME` is create `DB_NAME`
+ * itself — there is no database to connect to in order to create it. So this opens
+ * a second connection with no database selected, creates an empty one, and lets
+ * the normal connection take over.
+ *
+ * It is a no-op in the situation that actually matters: once cPanel has created
+ * the database, this never runs, because the first `authenticate()` already
+ * succeeded. It exists so that a developer who has never run this project does not
+ * have to open a MySQL client first.
+ *
+ * On cPanel this will usually be *refused*, and that is fine and expected. A
+ * cPanel database user is granted privileges on its own database only, not the
+ * global CREATE privilege, so the attempt fails and is swallowed. The error the
+ * operator sees is then the clear one from assertDatabaseConnection() below,
+ * telling them to create the database in the panel — which they have to do anyway.
+ */
+async function createDatabaseIfMissing() {
+  const admin = new Sequelize('', env.DB_USER, env.DB_PASSWORD, {
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    dialect: env.DB_DIALECT,
+    logging: false,
+    retry: { max: 0 },
+  });
+
+  try {
+    // Identifier cannot be a bound parameter in DDL, so it is interpolated. It is
+    // not user input in any meaningful sense: it comes from the validated env
+    // schema, which constrains it to a plain database name, and the value is
+    // backtick-escaped.
+    const name = `\`${env.DB_NAME.replace(/`/g, '``')}\``;
+
+    await admin.query(
+      `CREATE DATABASE IF NOT EXISTS ${name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    );
+
+    logger.warn({ database: env.DB_NAME }, 'database did not exist and has been created');
+    return true;
+  } catch (error) {
+    // Almost always ER_DBACCESS_DENIED_ERROR on shared hosting. Not fatal here:
+    // assertDatabaseConnection() reports the real problem with better wording.
+    logger.debug({ reason: error.message }, 'could not create the database automatically');
+    return false;
+  } finally {
+    await admin.close().catch(() => {});
+  }
+}
+
+/**
+ * Verify connectivity at boot, creating the database first if it is missing.
+ *
+ * On cPanel a misconfigured database user is the single most common deploy failure,
+ * so this fails loudly and names the cause instead of starting a process that 500s
+ * on every request.
  */
 export async function assertDatabaseConnection() {
   try {
     await sequelize.authenticate();
-    logger.info({ database: env.DB_NAME, host: env.DB_HOST }, 'database connection established');
-    return true;
   } catch (error) {
+    // ER_BAD_DB_ERROR is "Unknown database". Anything else — a refused
+    // connection, bad credentials, a wrong host — cannot be fixed by creating
+    // the database, so only this one case is retried.
+    const unknownDatabase = /Unknown database/i.test(error?.message || '');
+
+    if (unknownDatabase) {
+      logger.warn({ database: env.DB_NAME }, 'database not found; attempting to create it');
+      await createDatabaseIfMissing();
+
+      try {
+        await sequelize.authenticate();
+        logger.info({ database: env.DB_NAME, host: env.DB_HOST }, 'database connection established');
+        return true;
+      } catch {
+        // Fall through to the shared error below.
+      }
+    }
+
     logger.error({ err: error.message, database: env.DB_NAME, host: env.DB_HOST }, 'database connection failed');
     throw new Error(
       `Could not connect to MySQL at ${env.DB_HOST}:${env.DB_PORT} as "${env.DB_USER}". ` +
-        `Check the database exists, the user is granted ALL PRIVILEGES on it, and the password matches.`,
+        `Check the database exists, the user is granted ALL PRIVILEGES on it, and the password matches. ` +
+        (unknownDatabase
+          ? `On cPanel, create the database in the MySQL Databases panel — the app cannot create it ` +
+            `itself, because the account has rights to that one database only.`
+          : ''),
     );
   }
+
+  logger.info({ database: env.DB_NAME, host: env.DB_HOST }, 'database connection established');
+  return true;
 }
 
 /**
@@ -78,7 +154,8 @@ export async function assertDatabaseConnection() {
  * management, and that restriction is kept absolutely: `syncSchema()` is a no-op
  * unless DB_SYNC_ALLOWED is true, and config/env.js terminates the process at
  * boot if DB_SYNC_ALLOWED is true while NODE_ENV=production. Production applies
- * schema changes through `npm run migrate`.
+ * schema changes through the migrations in config/bootstrap.js, which run on
+ * startup.
  *
  * While iterating on models this saves running a migration for every field tweak.
  */

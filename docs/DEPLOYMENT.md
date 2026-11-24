@@ -10,59 +10,22 @@ Node.js cannot run on the account and this deployment path does not apply.
 
 ---
 
-## Before you deploy: three open bugs
-
-The deployment itself works — the app builds, the API boots, and the steps below
-are accurate. But three defects are still outstanding, and **two of them will
-make a step 11 check fail**, so read this first.
-
-1. **The admin console cannot save anything.** Every create, edit, delete and
-   publish in `/admin-teftef` posts to `/api/<resource>` on the *website*, but
-   `apps/web/app/api/` only contains `auth/login`, `auth/logout`, `auth/refresh`
-   and `contact`. There is no catch-all proxy and no `rewrites()` in
-   `next.config.mjs`, so those requests 404. Step 11's "publish a service" and
-   "submit the contact form" checks will fail. Fix: add a forwarding route at
-   `apps/web/app/api/[...path]/route.js`.
-
-2. **Uploaded media returns 401.** `apps/api/src/routes/index.js` mounts
-   `adminRoutes` at line 46 and the public media handler at line 57, and `media`
-   is in that router's `ADMIN_PREFIXES` set — so an anonymous `GET /media/...`
-   hits the auth guard and is rejected. Compounding it, `MEDIA_PUBLIC_URL=/media`
-   is root-relative, so stored URLs resolve against the website, which serves
-   nothing there. Step 11's "upload an image" check will fail. Fix: move the
-   media route above the admin router, and give it a route on the web app or an
-   absolute `MEDIA_PUBLIC_URL`.
-
-3. **`npm run backup` is broken.** `src/scripts/backup.js` uses `require()` in an
-   ESM module. See the note in step 12.
-
-Two more worth knowing about, which will not fail a deployment but will be
-noticed:
-
-- `/admin-teftef` itself returns 404 — there is no `(protected)/page.js`. The
-  Dashboard link in the nav points there, so use `/admin-teftef/dashboard`
-  directly. Step 11 already tests the full path.
-- There is no social card image: `app/og-image/route.js` exports no `GET`, so it
-  returns 405, and `lib/seo.js` points at `/og-default.png`, which does not
-  exist. Links shared to social media will render without a preview.
-
----
-
 ## What gets deployed
 
 Two independent applications:
 
-| App | Directory | Startup file | Port |
+| App | Directory | Startup | Port |
 | --- | --- | --- | --- |
-| Website | `apps/web` | `server.js` (or `npm run start`) | 3000 |
-| API | `apps/api` | `src/server.js` (or `npm run start`) | 4000 |
+| Website | `apps/web` | `server.js` | 3000 |
+| API | `apps/api` | `src/server.js` | 4000 |
 
-Both read `PORT` from the environment, because Passenger assigns the port rather
-than letting the app pick it. See step 3.
-
-The browser never talks to the API directly. Admin requests go to the website,
-which forwards them over loopback. That means **the API port never needs to be
-exposed or firewalled** — leave it bound to `127.0.0.1`.
+The browser calls the API directly at `https://api.virallinkdigital.com/api/v1/...`
+for every admin and form action. The website only renders pages and performs
+server-side data reads. Passenger exposes the API through its subdomain while the
+Node process itself stays bound to `127.0.0.1:4000` — leave `API_HOST=127.0.0.1`.
+The API must allow `https://virallinkdigital.com` in `CORS_ORIGINS` and set the
+session cookie for `COOKIE_DOMAIN=virallinkdigital.com`, or sign-in will fail from
+the site.
 
 ---
 
@@ -76,53 +39,17 @@ exposed or firewalled** — leave it bound to `127.0.0.1`.
 
 Note the full prefixed names — that is what goes in `.env`.
 
-Then **phpMyAdmin → your database → Import** is not needed. Run the migrations
-instead (step 5), which is safer than importing SQL by hand.
+Then **phpMyAdmin -> your database -> Import** is not needed. The API applies the migrations
+on first boot (step 6), which is safer than importing SQL by hand.
 
 ---
 
 ## 2. Upload the code
 
-Two workable orders. Pick one and stay consistent — the mistake that causes
-stale pages is uploading the code but not the matching `.next`.
+Upload the repository **excluding** these:
 
-### Option A — build on the server (recommended first time)
-
-Upload without `.next`, then build on the server:
-
-```bash
-tar --exclude=node_modules --exclude=.next --exclude=.env --exclude=.git \
-    --exclude=storage -czf virallink.tar.gz apps packages package.json .env.example
-```
-
-Upload to `/home/cpaneluser/`, **Extract** in File Manager, then in cPanel run
-**Run NPM Script → `npm run build:web`**. Compilation happens on the host, so
-there is never a mismatch between a build and the Node version it was made with.
-
-### Option B — build locally
-
-```bash
-npm install
-npm run build:web
-```
-
-Then include `.next` in the archive — **including** `apps/web/.next` this time.
-Cheaper on the host's CPU, which matters on shared plans, but you must upload a
-fresh `.next` with every code change.
-
-Either way you end up with:
-
-```
-/home/cpaneluser/virallink/
-├─ apps/
-│  ├─ api/
-│  └─ web/
-├─ packages/shared/
-├─ storage/media/        created in step 8
-└─ package.json
 ```
 node_modules
-.next
 .git
 .env
 storage/media/*
@@ -131,14 +58,25 @@ storage/media/*
 Use cPanel File Manager, or from a local terminal:
 
 ```bash
-# Build locally first, so the server never compiles
-npm install
-npm run build
+# Build locally first, so the server never compiles. Use production public
+# values here: NEXT_PUBLIC_* are inlined at build time.
+# Bash / Git Bash:
+cd apps/web && NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com npm run build && cd ../api && npm run build && cd ..
+
+# PowerShell:
+$env:NEXT_PUBLIC_SITE_URL="https://virallinkdigital.com"; $env:NEXT_PUBLIC_API_PUBLIC_URL="https://api.virallinkdigital.com"; npm run build:web; npm run build:api
+
+# Confirm the real origin was baked in, not localhost:
+#   grep "Sitemap:" apps/web/.next/server/app/robots.txt.body
 
 # Create the archive
-tar --exclude=node_modules --exclude=.next --exclude=.env --exclude=.git \
-    --exclude=storage -czf virallink.tar.gz apps packages package.json .env.example
+tar --exclude=node_modules --exclude=.env --exclude=.git \
+    --exclude=storage --exclude=apps/web/.next/dev -czf virallink.tar.gz apps packages package.json package-lock.json .env.example
 ```
+
+`.next/dev` is development-server output (roughly 748 MB of LevelDB files in this build) and is not needed by the production Node.js app. Exclude it to keep the upload smaller. A stray `.next.zip` left next to `.next` is also deleted/excluded - it is not part of the build. `.next/cache` can be excluded too if you want a smaller upload; `next start` rebuilds what it needs.
+
+**Never extract a build over an existing `.next` directory, and never upload an old `.next.zip`.** Next's HTML and its hashed chunk filenames are one atomic build unit. Mixing two builds leaves HTML referencing chunks that were never uploaded; the browser then gets a `text/plain` 404 for the missing `.js` and shows the route error screen with `ChunkLoadError`. Always stop the app, delete `apps/web/.next` entirely, then extract the fresh build. Every hashed file under `.next/static/chunks` must be present — do not filter that directory by name.
 
 Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 
@@ -164,15 +102,8 @@ Upload the archive to `/home/CPANELUSER/`, then **Extract** it in File Manager.
 | Node.js version | 20.x or 22.x |
 | Application mode | Production |
 | Application root | `virallink/apps/web` |
-| Application URL | `yourdomain.com` |
-| Application startup file | `server.js` |
-
-`apps/web/server.js` exists for exactly this reason: cPanel's **Application
-startup file** field wants a file path, not a command, so `next start` cannot be
-expressed in it. The wrapper boots the production Next server and binds to
-loopback on whatever `PORT` Passenger assigns. If your host's plugin offers a
-**Startup command** field instead, use `npm run start` there and leave the
-startup file blank.
+| Application URL | `virallinkdigital.com` |
+| Application startup file | `server.js` (or `index.js`, an included alias) |
 
 **Application 2 — API**
 
@@ -181,13 +112,12 @@ startup file blank.
 | Node.js version | same as above |
 | Application mode | Production |
 | Application root | `virallink/apps/api` |
-| Application URL | `api.yourdomain.com` |
-| Application startup file | `src/server.js` |
+| Application URL | `api.virallinkdigital.com` |
+| Application startup file | `src/server.js` (or `index.js`, an included alias) |
 
-The API startup file is `src/server.js`, not `server.js`. It reads `PORT` and
-`API_HOST` from the environment, so match `PORT` to whatever Passenger assigned.
+The API startup file is `src/server.js`, not `server.js`.
 
-A subdirectory URL such as `yourdomain.com/site` works, but the public site is
+A subdirectory URL such as `virallinkdigital.com/site` works, but the public site is
 much simpler at the domain root because every canonical URL and sitemap entry is
 built from `NEXT_PUBLIC_SITE_URL`.
 
@@ -195,21 +125,32 @@ built from `NEXT_PUBLIC_SITE_URL`.
 
 ## 4. Install dependencies
 
-Inside each app's entry, click **Run NPM Script**:
+**Never upload `node_modules` from a Windows or macOS machine.** `bcrypt` and
+`sharp` contain native binaries compiled for the machine that installed them; a
+Windows build fails on the Linux server with a module-load error, and the API
+will not start. Install on the server so npm downloads the Linux binaries.
 
-```
-npm install
-```
-
-Or use the **Terminal** in cPanel:
+Run once at the repository root from **Terminal**:
 
 ```bash
-cd ~/virallink && npm install
+cd ~/virallink && npm ci --omit=dev
 ```
 
-Install **once at the repository root**. npm workspaces then links
-`apps/api` and `apps/web` against the hoisted `node_modules`. Running it
-separately per app duplicates ~300MB and can break workspace resolution.
+If the host only offers a per-application **Run NPM Install** action, run it for
+`apps/api` and then `apps/web`. That creates app-local dependency trees and uses
+more disk, but it is the only option without Terminal.
+
+Install **once at the repository root** when possible. npm workspaces then links `apps/api` and
+`apps/web` against the hoisted `node_modules`. Running it separately per app
+duplicates ~300MB and can break workspace resolution.
+
+If the host has no Terminal and no npm install action, upload a `node_modules`
+tree that was installed **on Linux with the same Node major version** as the
+cPanel app. A local development tree is not usable.
+
+The archive from step 2 already contains `apps/web/.next`, so the server never
+compiles. Note what is *not* needed: no migrate step, no seed step, no
+admin-creation command. The API does all three on startup - see steps 6 and 7.
 
 ---
 
@@ -219,39 +160,48 @@ Two options. Use the cPanel UI if you have it; otherwise a `.env` file.
 
 ### Option A — the UI
 
-**Setup Node.js App → your app → Environment Variables**. Add the same variables
-to both apps, adjusting `SITE_URL` and `CORS_ORIGINS`:
+**Setup Node.js App -> each app -> Environment Variables**. Add only the
+variables each app needs.
+
+**Website app** (`apps/web`):
 
 ```env
 NODE_ENV=production
+NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com
+# Browser calls go straight to this origin. NEXT_PUBLIC_* is inlined at build
+# time, so this must also be set when you run npm run build (see step 2).
+NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com
+# Server-side rendering uses this base. Use the public origin if the two Node
+# apps are not on the same machine; use http://127.0.0.1:4000 if they are.
+API_INTERNAL_URL=https://api.virallinkdigital.com
+NEXT_PUBLIC_ADMIN_PATH=/vira-admin
+```
 
-# API only
+**API app** (`apps/api`):
+
+```env
+NODE_ENV=production
 PORT=4000
 API_HOST=127.0.0.1
 
-# Shared
-SITE_URL=https://yourdomain.com
-NEXT_PUBLIC_SITE_URL=https://yourdomain.com
-NEXT_PUBLIC_API_PUBLIC_URL=
-API_INTERNAL_URL=http://127.0.0.1:4000
-NEXT_PUBLIC_ADMIN_PATH=/admin-teftef
+SITE_URL=https://virallinkdigital.com
+CORS_ORIGINS=https://virallinkdigital.com
 
 DB_HOST=localhost
 DB_PORT=3306
-DB_DIALECT=mysql
 DB_NAME=cpaneluser_virallink_prod
 DB_USER=cpaneluser_virallink_user
 DB_PASSWORD=<generated>
-DB_POOL_MAX=5
 
 JWT_SECRET=<openssl rand -base64 48>
 JWT_REFRESH_SECRET=<openssl rand -base64 48, different>
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=30d
 COOKIE_SECURE=true
+# Session cookies must be readable by the website on the parent domain when the
+# browser calls the API directly from another subdomain.
+COOKIE_DOMAIN=virallinkdigital.com
 BCRYPT_ROUNDS=12
-
-CORS_ORIGINS=https://yourdomain.com
 
 STORAGE_DRIVER=local
 MEDIA_ROOT=/home/cpaneluser/virallink/storage/media
@@ -260,92 +210,104 @@ MEDIA_MAX_BYTES=10485760
 
 LOG_LEVEL=info
 
-# Required in production — see the note below. Omitting these makes the API
-# refuse to boot with "Unsafe production configuration".
-DB_SYNC_ALLOWED=false
+# Production applies schema changes deliberately (Run NPM Script -> npm run
+# migrate), so AUTO_MIGRATE must be false here. The API refuses to boot in
+# production if it is true. AUTO_SEED stays true: the seeder is pure upsert.
 AUTO_MIGRATE=false
 AUTO_SEED=true
+
+# Password recovery. All optional — the defaults are sensible.
+# Codes are delivered over Telegram, so this only helps accounts that have
+# Telegram linked.
+PASSWORD_RESET_CODE_TTL_MINUTES=10
+PASSWORD_RESET_MAX_ATTEMPTS=5
+PASSWORD_RESET_MAX_SENDS_PER_HOUR=3
+PASSWORD_RESET_RESEND_SECONDS=60
 ```
 
-### AUTO_MIGRATE must be false in production
+The website does not need the database or JWT secrets: all authentication and
+data access happens at the API, which the browser calls directly. Keep those
+values on the API app.
 
-The API applies pending migrations and seeds the RBAC baseline at boot, which is
-what makes a local `npm run dev` work against an empty database with no manual
-step. That behaviour is **disabled in production**, and `config/env.js` exits at
-startup if `AUTO_MIGRATE` is true there:
+`NEXT_PUBLIC_*` values are compiled into the client bundle at build time, so
+changing them requires a rebuild — not just a restart.
 
-```
-Unsafe production configuration:
-  - AUTO_MIGRATE must be false in production. Passenger can start several
-    processes at once and concurrent migrations on a live database are not safe.
-```
+### Option B — a .env file per app
 
-Passenger can start several processes at once, and two of them running the same
-migration at once is how you corrupt a schema. So in production you apply
-migrations deliberately, one process at a time, in step 6.
+Each app has its own `.env`; neither reads the other.
 
-`AUTO_SEED` stays `true`. The seeder is pure upsert — permissions, four roles,
-their grants, twelve financial categories and the company profile — so running it
-on every boot cannot duplicate a row or lose data. It is the same code
-`npm run seed` runs.
+- `apps/web/.env` — website only (Site URL + `API_INTERNAL_URL`). Never this
+  file from a public directory.
+- `apps/api/.env` — API only. Never this file from a public directory.
 
-The rest of the block is optional: `DB_DIALECT`, `DB_POOL_*`, `COOKIE_DOMAIN`,
-`COOKIE_PATH`, `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCK_MINUTES`, `RATE_LIMIT_*`,
-`MEDIA_ALLOWED_TYPES`, `ACTIVITY_RETENTION_DAYS`, `BACKUP_*` and `STORAGE_REGION`
-all have defaults in `config/env.js`. They are listed above so you know they
-exist. `NEXT_PUBLIC_*` values are compiled into the client bundle at build time,
-so changing them requires a rebuild — not just a restart.
-
-### Option B — a .env file
-
-Place `.env` at `/home/cpaneluser/virallink/.env`. `config/env.js` walks upward
-from the API directory and finds it. Never upload this file from a public
-directory.
+Both apps also honour a single root `.env` as a fallback for convenience, but
+the split two-app setup is what is documented here.
 
 ---
 
-## 6. Run migrations
+## 6. Schema and reference data
 
-**Setup Node.js App → API app → Run NPM Script**:
+In development the API applies pending migrations and seeds the RBAC baseline on
+every start, before it opens its listening port (`AUTO_MIGRATE=true`,
+`AUTO_SEED=true`). Both operations are idempotent:
 
-```
-npm run migrate
-```
+- a migration runs **once**, then its filename is recorded in the `SequelizeMeta`
+  table, so it never runs twice;
+- the seeder **upserts**, so re-running updates rows rather than duplicating them.
+  It contains no business data — no clients, employees, testimonials or statistics.
 
-Then seed the roles and permissions:
+**In production, apply migrations deliberately.** Set `AUTO_MIGRATE=false` (the API
+refuses to boot in production if it is true), then in cPanel open the API app and
+use **Run NPM Script → `npm run migrate`** before restarting. One process applies
+the changes; Passenger is not allowed to race several of them against a live
+schema. `AUTO_SEED=true` stays on: the seeder is pure upsert, and it runs inside a
+MySQL advisory lock so concurrent Passenger processes cannot duplicate the company
+profile or financial categories.
 
-```
-npm run seed
-```
+On the first boot against an empty database, after the migrations have run, the
+seeder creates the RBAC baseline — 49 permissions, 15 roles, 12 financial
+categories and the company profile. Every later boot finds nothing pending and
+takes a few milliseconds.
 
-Both are safe to re-run: applied migrations are recorded in the `SequelizeMeta`
-table and the seeder uses upserts. `npm run seed` contains no fake business data.
-Confirm what has run:
+**If a migration fails**, the API logs the error and does not start. That is
+intended: an app that refuses to boot is a visible failure, whereas one that starts
+against a half-built schema 500s on every page with nothing in the log to explain
+it. The migration helpers tolerate an already-present column, so a migration that
+failed partway is recoverable by fixing it and running the migration again.
 
-```bash
-npm run migrate:status
-```
-
-If **Run NPM Script** is unavailable, use **Terminal**:
-
-```bash
-cd ~/virallink/apps/api && npm run migrate && npm run seed
-```
-
-Both steps are also what the API would do on its own if `AUTO_MIGRATE=true`, but
-step 5 sets it to `false`, so run them here. Re-run this section after every
-deploy that ships a new migration.
+`npm run migrate` and `npm run seed` reach the same end state on a machine with a
+shell. They are a developer convenience, and in production `npm run migrate` is the
+deliberate schema step described above.
 
 ---
 
-## 7. Create the administrator
+## 7. Create the first administrator
 
-```bash
-cd ~/virallink/apps/api && npm run create:admin
-```
+**Done in the browser, not the terminal.**
 
-Interactive, so the password never appears in shell history. Do this over SSH,
-not the web terminal, if your host logs terminal sessions.
+Open `https://virallinkdigital.com/vira-admin/login`. On an install with no accounts the
+page shows **first-time setup** instead of the sign-in form: enter a name, email
+and password, and the account is created with the SUPER_ADMIN role.
+
+That form exists for the same reason as the automatic migrations. The schema can
+build itself, but a person cannot, and without this a fresh install would have no
+way to sign in and no way to create the first account. The hosting target gives no
+shell to run `npm run create:admin` in.
+
+Two things make it safe:
+
+- **The API refuses the request the moment any account exists** — permanently, not
+  just while the form is hidden. Two simultaneous requests on an empty install
+  cannot both pass the "no users" check, because the count is re-verified inside
+  the insert.
+- It returns nothing but a boolean about whether setup is needed, so it cannot be
+  used to discover whether an email address has an account.
+
+The password rules are the same as the admin user form: at least 12 characters
+with an upper case letter, a lower case letter and a number.
+
+To add further accounts afterwards, use **System → Users & roles** in the admin,
+or `npm run create:admin` from a shell if you have one.
 
 ---
 
@@ -367,7 +329,9 @@ node -e "import('./src/config/env.js').then(async m=>{const d=(await import('./s
 Keep `MEDIA_ROOT` **outside** `public_html`. Files are served through the API's
 media route, which validates the key and resolves it inside the media root, so a
 traversal attempt cannot escape. Uploads are re-encoded to WebP by `sharp`,
-which strips EXIF including GPS coordinates.
+which strips EXIF including GPS coordinates. Stored rows use the site-relative
+path `/media/<key>`; a Next.js redirect sends the browser to the API's
+`/api/v1/media/<key>` instead of proxying the bytes through Next.js.
 
 ---
 
@@ -467,7 +431,7 @@ To apply the admin `X-Robots-Tag` rule, add this before the header block:
 
 ```apache
 RewriteEngine On
-RewriteCond %{REQUEST_URI} ^/admin-teftef
+RewriteCond %{REQUEST_URI} ^/vira-admin
 RewriteRule ^(.*)$ $1 [E=REDIRECT_ADMIN:1]
 ```
 
@@ -480,7 +444,7 @@ RewriteRule ^(.*)$ $1 [E=REDIRECT_ADMIN:1]
 Confirm the redirect works:
 
 ```bash
-curl -I https://yourdomain.com/
+curl -I https://virallinkdigital.com/
 ```
 
 Expect `301` to the same URL over HTTPS. `COOKIE_SECURE=true` means sessions will
@@ -492,32 +456,48 @@ not work over plain HTTP, so this step is not optional.
 
 ```bash
 # API health
-curl https://api.yourdomain.com/health
+curl https://api.virallinkdigital.com/health
 # → {"status":"ok","database":"up",...}
 
 # Public site
-curl -I https://yourdomain.com/
-curl -I https://yourdomain.com/admin-teftef/dashboard
+curl -I https://virallinkdigital.com/
+curl -I https://virallinkdigital.com/vira-admin/dashboard
 ```
 
 The second must return `307` redirecting to the login page — proof the auth gate
 works.
 
+Check that the bootstrap actually ran. The API log on startup contains:
+
+```
+AUTO_MIGRATE is on — applying pending migrations
+AUTO_SEED is on — seeding reference data
+```
+
+and nothing after that on a database that was already current. If you see
+`migration applied` lines, this deploy brought the schema up to date — which is
+the expected result of the first deploy and of any deploy carrying a new migration.
+
+Then open `https://virallinkdigital.com/vira-admin/login` in a browser. On a fresh
+install it offers **first-time setup**; create the administrator, and the form
+disappears. On an install that already has accounts it shows the normal sign-in
+form and the setup option is gone.
+
 Confirm the index protections:
 
 ```bash
-curl -I https://yourdomain.com/robots.txt | grep -i "x-robots\|content-type"
-curl https://yourdomain.com/robots.txt | grep admin
-curl -I https://yourdomain.com/admin-teftef/dashboard | grep -i "x-robots"
+curl -I https://virallinkdigital.com/robots.txt | grep -i "x-robots\|content-type"
+curl https://virallinkdigital.com/robots.txt | grep admin
+curl -I https://virallinkdigital.com/vira-admin/dashboard | grep -i "x-robots"
 ```
 
 Then check by hand:
 
-- [ ] Sign in at `/admin-teftef/login`
+- [ ] Sign in at `/vira-admin/login`
 - [ ] Publish a service — `/services/<slug>` appears without a redeploy
 - [ ] The new URL is in `/sitemap.xml`
 - [ ] An unpublished service returns 404 on its page
-- [ ] `/admin-teftef/*` does not appear in the sitemap
+- [ ] `/vira-admin/*` does not appear in the sitemap
 - [ ] Upload an image — it appears with the right dimensions
 - [ ] Submit the contact form — the enquiry shows in the admin inbox
 
@@ -528,15 +508,30 @@ Then check by hand:
 **cPanel → Cron Jobs**. Run the maintenance job nightly and the backup daily.
 
 ```bash
-# 03:15 — prune expired sessions and old audit rows
+# 03:15 — prune expired sessions, spent reset codes and old audit rows
 15 3 * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/pruneActivity.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
 
 # 04:30 — database backup
 30 4 * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/backup.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
+
+# every 5 minutes — deliver queued Telegram notifications
+*/5 * * * * cd /home/cpaneluser/virallink/apps/api && /home/cpaneluser/nodevenv/virallink/apps/api/20/bin/node src/scripts/telegramOutbox.js >> /home/cpaneluser/virallink/storage/cron.log 2>&1
 ```
 
 Use the **absolute path to the node binary cPanel gave you** — `which node` from
 the terminal. A relative `node` will not resolve in cron.
+
+The Telegram drain line is only needed when `TELEGRAM_ENABLED=true`. Notifications
+are delivered immediately when they are queued, so this is only a safety net for
+anything a restarted process left behind — but on a host that recycles processes
+unpredictably, it is the difference between "usually arrives" and "arrives".
+
+Password reset codes go through the same queue, so this job is part of the
+recovery path: a code queued while the process was being recycled is delivered
+by the drain rather than lost. It is also why the code's lifetime
+(`PASSWORD_RESET_CODE_TTL_MINUTES`, ten minutes by default) is worth leaving
+generous — a code that arrives after it has expired is a code the person cannot
+use.
 
 ### Check the backup is actually producing files
 
@@ -552,10 +547,87 @@ usual cause is that the host has no `mysqldump` binary on the PATH for the cron
 environment. In that case use **phpMyAdmin → Export → Save as file** on a daily
 schedule instead, and confirm you can restore a copy before relying on it.
 
-> **Known issue.** `src/scripts/backup.js` currently calls `require()` inside a
-> file that uses ESM `import` (`apps/api/package.json` sets `"type": "module"`),
-> so it throws `ReferenceError: require is not defined` and the cron entry above
-> fails on every run. Fix this before treating backups as working.
+---
+
+## Telegram bot (optional)
+
+Task notifications can be delivered through a Telegram bot. Nothing else requires
+a bot, and the feature is inert until it is switched on.
+
+1. Message **@BotFather**, run `/newbot`, and note the token it returns.
+2. In `.env` set `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and
+   `TELEGRAM_BOT_USERNAME` (the @name without the `@`). Generate a webhook secret
+   and set `TELEGRAM_WEBHOOK_SECRET`:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+3. Set `TELEGRAM_WEBHOOK_URL` to the API's public base URL — `https://api.virallinkdigital.com`
+   — and restart the API. The API compares that value with the webhook
+   Telegram actually has registered and **re-registers when they differ**, so
+   this is normally the only step. `npm run telegram:webhook -- set` does the
+   same thing by hand, and `npm run telegram:webhook --status` shows the
+   registered URL and Telegram's last delivery failure.
+4. Restart the API, then open **Account → Telegram notifications** and connect.
+
+Telegram must be able to reach the API over HTTPS. The webhook URL path contains
+the secret, and Telegram also sends it back in a header; the route requires both,
+so discovering the URL is not enough to drive the bot.
+
+**Three things that silently stop it, and what each looks like:**
+
+| Problem | Symptom | Fix |
+| --- | --- | --- |
+| The subdomain has no certificate | `lastError` mentions an SSL error, or Telegram reports a 526 | Run AutoSSL for the subdomain, not just the apex domain. Telegram refuses an invalid certificate |
+| Apache answers instead of the Node app | `lastError` is `404` | The subdomain's document root must point at the API app, and Passenger must own the path |
+| The webhook still points at the old URL | `lastError` is `530` or a DNS failure | Set `TELEGRAM_WEBHOOK_URL` and restart, or run `npm run telegram:webhook -- set` |
+
+All three are visible in `npm run telegram:webhook --status`, which prints
+Telegram's own last delivery failure rather than leaving you to infer it.
+
+### Testing it before the domain is live
+
+The bot needs a public address to hear from Telegram, but a password-reset
+code only needs the bot to *send*. On a machine with no public address, read
+the chat id out of Telegram's own queue:
+
+```bash
+npm run telegram:chatid --workspace @virallink/api
+```
+
+It removes the webhook so Telegram queues updates, waits for you to message
+the bot, and prints the chat id and username. Put the chat id in the
+account's "Telegram chat id" field (Settings → Users → edit) and reset codes
+are delivered from then on, with no domain involved.
+
+Register the real webhook once the domain is live — the API does it by itself
+when `TELEGRAM_WEBHOOK_URL` is set and the registered URL does not match.
+
+### The webhook has to be reachable
+
+This is the failure that hides best. A bot whose webhook points at a URL
+Telegram cannot reach does not crash and does not log anything of its own — it
+simply never hears anything. The visible consequences are that nobody can link
+Telegram and nobody can recover a forgotten password, and the symptom reads as
+"the feature is broken" rather than "the webhook is down".
+
+Two things guard against it:
+
+```bash
+# check it — prints the registered URL and Telegram's last delivery failure
+npm run telegram:webhook --status --workspace @virallink/api
+
+# register it against the public base URL
+npm run telegram:webhook -- set https://virallinkdigital.com --workspace @virallink/api
+```
+
+The API also checks the webhook on every boot and logs a warning when Telegram
+cannot reach it, so the problem surfaces in the application log rather than
+only in Telegram's own status.
+
+**If the API is behind a tunnel** — a Cloudflare quick tunnel, `ngrok`, or
+similar — the public URL changes every time the tunnel restarts, and the
+webhook has to be re-registered each time. A quick tunnel's random
+`trycloudflare.com` hostname is not a stable address to point a webhook at.
+Use the production domain on cPanel; use a tunnel only for local testing, and
+re-register the webhook after each restart of it.
 
 ---
 
@@ -575,11 +647,14 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 | Symptom | Cause and fix |
 | --- | --- |
 | 500 on every page | App logs show the real error. `Setup Node.js App → your app → Open Logs`. Most often a missing env var or a failed migration. |
+| Browser says "No `Access-Control-Allow-Origin` header" and API requests return 500 | The API is rejecting the site's origin. Set `CORS_ORIGINS=https://virallinkdigital.com` in the **API app's** environment (exact string, no quotes, no trailing slash, no `www.`, no `*`) and restart the API app. Confirm with `curl -i -X OPTIONS https://api.virallinkdigital.com/api/v1/auth/login -H "Origin: https://virallinkdigital.com" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type"` — a 204 with `Access-Control-Allow-Origin` means it is fixed. |
 | `EADDRINUSE` | Passenger assigned a different port than `PORT`. Read `PORT` from the cPanel panel and match it. |
 | Admin login succeeds then bounces | `COOKIE_SECURE=true` with HTTP. Enable AutoSSL. Also check `NEXT_PUBLIC_SITE_URL` matches the real origin exactly, including scheme. |
 | Media uploads fail | `MEDIA_ROOT` not writable. Run the permission check from step 8. |
 | Stale content after an edit | The API caches public reads for 2–10 minutes. Any admin write clears it, so a stale page means the write itself failed. |
 | `429` from the contact form | 5 submissions/hour per IP by default. Raise `RATE_LIMIT_CONTACT_MAX`. |
+| No reset code arrives | The bot cannot receive updates, so it cannot reply to the link that carries the code. Run `npm run telegram:webhook --status --workspace @virallink/api` — it prints Telegram's last delivery failure. If the URL is a tunnel that has restarted, re-register it. |
+| Telegram calls time out | The API is slow to reach. `TELEGRAM_API_TIMEOUT_MS` defaults to 30000; raise it if the host is far away. |
 | API returns 502 | Either the app is stopped or `API_INTERNAL_URL` is wrong. `curl http://127.0.0.1:4000/health` from Terminal. |
 | `Module not found` after a Git pull | Run `npm install` again at the repository root. |
 | Out of memory / process killed | Lower `DB_POOL_MAX` to 2 and `BCRYPT_ROUNDS` is not the cause — image processing is. Raise the host's memory limit or set `images.unoptimized = true` (already the default). |
@@ -590,8 +665,9 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 
 - [ ] `NODE_ENV=production`
 - [ ] `DB_SYNC_ALLOWED=false` — **critical**. True in production can drop columns and destroy financial data. The API refuses to boot if it is true, but verify it is not set.
-- [ ] `AUTO_MIGRATE=false` — **critical**. The API refuses to boot in production if it is true, because Passenger can start concurrent processes and concurrent migrations on a live database are not safe.
 - [ ] `COOKIE_SECURE=true`
+- [ ] `AUTO_MIGRATE=false` — **critical**. The API refuses to boot in production if it is true. Apply schema changes deliberately with **Run NPM Script → `npm run migrate`** before restarting.
+- [ ] `AUTO_SEED=true` — the RBAC baseline seeder is idempotent and safe on every boot.
 - [ ] `JWT_SECRET` and `JWT_REFRESH_SECRET` are different 48-byte random values
 - [ ] `CORS_ORIGINS` lists only your real origin, no `*`
 - [ ] `SITE_URL` and `NEXT_PUBLIC_SITE_URL` both use `https://`
@@ -600,8 +676,9 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 - [ ] Database user is not `root`
 - [ ] Daily backups configured and a restore actually tested
 - [ ] Only `SUPER_ADMIN` accounts can reach user and role management
-- [ ] `X-Robots-Tag` present on `/admin-teftef/*` responses
-- [ ] `https://yourdomain.com/robots.txt` disallows `/admin-teftef`
+- [ ] First administrator created, and `/vira-admin/login` no longer offers first-time setup
+- [ ] `X-Robots-Tag` present on `/vira-admin/*` responses
+- [ ] `https://virallinkdigital.com/robots.txt` disallows `/vira-admin`
 
 ## Operational notes
 

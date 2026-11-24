@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 
 export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
   const router = useRouter();
@@ -23,8 +24,8 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
     }
 
     Promise.all([
-      fetch('/api/blog/categories').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
-      fetch('/api/blog/tags').then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/blog/categories'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
+      fetch(browserApiUrl('/api/blog/tags'), { credentials: 'include' }).then((r) => r.json()).then((d) => d.data || []).catch(() => []),
     ]).then(([cats, tgs]) => {
       setCategories(cats);
       setTags(tgs);
@@ -53,9 +54,10 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/blog/${post.id}` : '/api/blog', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/blog/${post.id}` : '/api/blog'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -69,6 +71,7 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

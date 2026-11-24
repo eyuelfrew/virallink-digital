@@ -36,7 +36,22 @@ function buildKey({ folder, filename, ext = GENERATED_EXT, contentType }) {
 
   // Derive the extension from the *converted* content type, never from the
   // uploaded filename, so a crafted name cannot pick the stored extension.
-  const extensionByType = { 'image/webp': '.webp', 'image/jpeg': '.jpg', 'image/png': '.png' };
+  const extensionByType = {
+    'image/webp': '.webp',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    // Audio is stored as uploaded — it cannot be re-encoded without a codec
+    // pipeline — so its extension comes from the detected container instead.
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.m4a',
+    'audio/x-m4a': '.m4a',
+    'audio/aac': '.aac',
+    'audio/ogg': '.ogg',
+    'audio/wav': '.wav',
+    'audio/x-wav': '.wav',
+    'audio/webm': '.webm',
+    'audio/flac': '.flac',
+  };
   const resolvedExt = ext && ext !== GENERATED_EXT ? ext : extensionByType[contentType] || '.bin';
 
   return [folder, year, month, `${filename}${resolvedExt}`].filter(Boolean).join('/');

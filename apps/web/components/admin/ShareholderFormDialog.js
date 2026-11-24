@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { browserApiUrl } from '@/lib/config';
 import { SHAREHOLDER_STATUS, SHARE_CLASS } from '@virallink/shared/enums';
 
 export function ShareholderFormDialog({ shareholder = null, triggerLabel = 'Add shareholder' }) {
@@ -40,9 +41,10 @@ export function ShareholderFormDialog({ shareholder = null, triggerLabel = 'Add 
     };
 
     try {
-      const response = await fetch(isEdit ? `/api/shareholders/${shareholder.id}` : '/api/shareholders', {
+      const response = await fetch(browserApiUrl(isEdit ? `/api/shareholders/${shareholder.id}` : '/api/shareholders'), {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -56,6 +58,7 @@ export function ShareholderFormDialog({ shareholder = null, triggerLabel = 'Add 
       }
 
       setOpen(false);
+      setPending(false);
       router.refresh();
     } catch {
       setError('The management service did not respond. Please try again.');

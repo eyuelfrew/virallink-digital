@@ -3,6 +3,7 @@ import env from '../config/env.js';
 import sequelize from '../config/database.js';
 import models from '../models/index.js';
 import { pruneExpiredTokens } from '../services/auth.service.js';
+import { pruneResetTokens } from '../services/password-reset.service.js';
 import { pruneRevokedTokens } from '../utils/cache.js';
 import logger from '../config/logger.js';
 
@@ -15,6 +16,7 @@ import logger from '../config/logger.js';
  * Prunes:
  *  - refresh_tokens whose expiry has passed
  *  - activity_logs older than ACTIVITY_RETENTION_DAYS
+ *  - password_reset_tokens older than a week, spent or not
  *  - the in-memory token blocklist (only meaningful within one process, so it is
  *    cleared defensively)
  */
@@ -67,6 +69,11 @@ async function main() {
 
   pruneRevokedTokens();
 
+  const resets = await pruneResetTokens().catch((error) => {
+    logger.error({ err: error.message }, 'failed to prune password reset tokens');
+    return 0;
+  });
+
   const activity = await pruneActivityLogs().catch((error) => {
     logger.error({ err: error.message }, 'failed to prune activity logs');
     return 0;
@@ -77,8 +84,10 @@ async function main() {
     return 0;
   });
 
-  logger.info({ tokens, activity, archived }, 'maintenance complete');
-  console.log(`Pruned ${tokens} expired session(s), ${activity} activity log row(s), ${archived} archived record(s).`);
+  logger.info({ tokens, resets, activity, archived }, 'maintenance complete');
+  console.log(
+    `Pruned ${tokens} expired session(s), ${resets} reset token(s), ${activity} activity log row(s), ${archived} archived record(s).`,
+  );
 
   await sequelize.close();
   process.exit(0);

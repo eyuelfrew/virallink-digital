@@ -1,17 +1,14 @@
-import { INTERNAL_API_URL, PUBLIC_API_URL, REVALIDATE } from './config.js';
+import { INTERNAL_API_URL, REVALIDATE } from './config.js';
+import { PUBLIC_TAGS } from './publicCache.js';
 import { withQuery } from './utils.js';
 
 /**
- * API client.
+ * API client for server-side rendering.
  *
- * Two call paths, chosen automatically:
- *
- *  - Server Components and Route Handlers call the API directly over loopback
- *    using the caller's cookies. Fast, and the API stays unreachable from the
- *    internet.
- *  - Browser code calls this app's own /api routes, which forward server-side.
- *
- * Either way the browser never holds an API URL or a token.
+ * Server Components call the API directly at INTERNAL_API_URL, forwarding the
+ * caller's cookies. Client Components use `browserApiUrl` from `lib/config.js`
+ * and call the API from the browser instead; no Next.js route handler is
+ * involved in either path.
  *
  * Failure policy: this never throws on a non-2xx response. A page must render
  * with an empty state rather than a 500 because one endpoint hiccupped, so every
@@ -56,7 +53,7 @@ function resolveUrl(path) {
  */
 const REQUEST_TIMEOUT_MS = Number(process.env.API_TIMEOUT_MS) || 8000;
 
-async function request(path, { method = 'GET', body, cookie, headers: extraHeaders, signal, cache = 'no-store' } = {}) {
+async function request(path, { method = 'GET', body, cookie, headers: extraHeaders, signal, cache = 'no-store', next } = {}) {
   try {
     // Combine any caller-supplied signal with the timeout, so a caller can still
     // cancel early without losing the deadline.
@@ -69,19 +66,34 @@ async function request(path, { method = 'GET', body, cookie, headers: extraHeade
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       cache,
-      // Server-side rendering must never serve a half-populated page from the
-      // router cache; the data layer controls its own caching instead.
-      next: { revalidate: cache === 'no-store' ? 0 : undefined },
+      /*
+       * The caller's `next` has to win. `cachedGet` asks for a specific
+       * revalidation window, and dropping it left `cache: 'force-cache'` with no
+       * revalidate at all — which Next treats as "cache forever". The first
+       * render of a public page then froze whatever the API returned at that
+       * moment, so publishing an employee changed nothing on the site until the
+       * server was restarted.
+       */
+      next: next ?? { revalidate: cache === 'no-store' ? 0 : undefined },
     });
 
     const text = await response.text();
-    let body = null;
+    /*
+     * Named `payload`, not `body`. The destructured `body` parameter above is
+     * shadowed for the whole function body by a same-named `let`, which sits in
+     * the temporal dead zone until this line executes. Referencing `body` while
+     * building the fetch options threw "Cannot access 'body' before
+     * initialization" on every single call, before the request was ever made —
+     * so every API read silently degraded to its fallback and no request reached
+     * the API at all.
+     */
+    let payload = null;
 
     if (text) {
       try {
-        body = JSON.parse(text);
+        payload = JSON.parse(text);
       } catch {
-        body = { raw: text };
+        payload = { raw: text };
       }
     }
 
@@ -91,15 +103,15 @@ async function request(path, { method = 'GET', body, cookie, headers: extraHeade
      * envelope here once made a validation failure surface downstream as a
      * non-iterable "array", crashing list rendering far from the cause.
      */
-    const data = response.ok ? body?.data ?? body : null;
+    const data = response.ok ? payload?.data ?? payload : null;
 
     return {
       ok: response.ok,
       status: response.status,
       data,
-      error: body?.error ?? null,
-      meta: body?.meta ?? null,
-      totals: body?.totals ?? null,
+      error: payload?.error ?? null,
+      meta: payload?.meta ?? null,
+      totals: payload?.totals ?? null,
     };
   } catch (error) {
     // A network failure to the API must not take the public site down.
@@ -128,25 +140,32 @@ async function requestOrThrow(path, options = {}) {
  * Cached read for public content.
  *
  * The Next data cache handles revalidation here, which is what keeps repeat
- * visits fast on shared hosting. Anything an admin changes should be followed by
- * a cache invalidation, so published content updates promptly.
+ * visits fast on shared hosting. Each read carries a tag, so an admin write can
+ * purge exactly the content it affected (see `publicCache.js`).
  */
-function cachedGet(path, revalidateSeconds) {
-  return request(path, { cache: 'force-cache', next: { revalidate: revalidateSeconds } });
+function cachedGet(path, revalidateSeconds, tag) {
+  return request(path, {
+    cache: 'force-cache',
+    next: tag ? { revalidate: revalidateSeconds, tags: [tag] } : { revalidate: revalidateSeconds },
+  });
 }
 
 export async function fetchCompany() {
-  const { data } = await cachedGet('/api/v1/public/company', REVALIDATE.company);
+  const { data } = await cachedGet('/api/v1/public/company', REVALIDATE.company, PUBLIC_TAGS.company);
   return data?.company || null;
 }
 
 export async function fetchServices() {
-  const { data } = await cachedGet('/api/v1/public/services', REVALIDATE.services);
+  const { data } = await cachedGet('/api/v1/public/services', REVALIDATE.services, PUBLIC_TAGS.services);
   return data?.services || [];
 }
 
 export async function fetchService(slug) {
-  const { data, ok } = await cachedGet(`/api/v1/public/services/${encodeURIComponent(slug)}`, REVALIDATE.services);
+  const { data, ok } = await cachedGet(
+    `/api/v1/public/services/${encodeURIComponent(slug)}`,
+    REVALIDATE.services,
+    PUBLIC_TAGS.services,
+  );
   return ok ? data : null;
 }
 
@@ -158,12 +177,16 @@ export async function fetchProjects({ page = 1, pageSize = 12, service = null, f
     featured: featured ? 'true' : undefined,
   });
 
-  const { data, meta } = await cachedGet(path, REVALIDATE.projects);
+  const { data, meta } = await cachedGet(path, REVALIDATE.projects, PUBLIC_TAGS.portfolio);
   return { projects: data || [], meta: meta || { page, pageSize, total: 0, totalPages: 0 } };
 }
 
 export async function fetchProject(slug) {
-  const { data, ok } = await cachedGet(`/api/v1/public/portfolio/${encodeURIComponent(slug)}`, REVALIDATE.project);
+  const { data, ok } = await cachedGet(
+    `/api/v1/public/portfolio/${encodeURIComponent(slug)}`,
+    REVALIDATE.project,
+    PUBLIC_TAGS.portfolio,
+  );
   return ok ? data?.project || null : null;
 }
 
@@ -173,27 +196,31 @@ export async function fetchFeaturedProjects(limit = 4) {
 }
 
 export async function fetchTeam() {
-  const { data } = await cachedGet('/api/v1/public/team', REVALIDATE.team);
+  const { data } = await cachedGet('/api/v1/public/team', REVALIDATE.team, PUBLIC_TAGS.team);
   return data?.team || [];
 }
 
 export async function fetchPublicClients() {
-  const { data } = await cachedGet('/api/v1/public/clients', REVALIDATE.clients);
+  const { data } = await cachedGet('/api/v1/public/clients', REVALIDATE.clients, PUBLIC_TAGS.clients);
   return data?.clients || [];
 }
 
 export async function fetchTestimonials(limit = 6) {
-  const { data } = await cachedGet('/api/v1/public/testimonials', REVALIDATE.clients);
+  const { data } = await cachedGet('/api/v1/public/testimonials', REVALIDATE.clients, PUBLIC_TAGS.testimonials);
   return (data?.testimonials || []).slice(0, limit);
 }
 
 export async function fetchJobs() {
-  const { data } = await cachedGet('/api/v1/public/jobs', REVALIDATE.jobs);
+  const { data } = await cachedGet('/api/v1/public/jobs', REVALIDATE.jobs, PUBLIC_TAGS.jobs);
   return data?.jobs || [];
 }
 
 export async function fetchJob(slug) {
-  const { data, ok } = await cachedGet(`/api/v1/public/jobs/${encodeURIComponent(slug)}`, REVALIDATE.jobs);
+  const { data, ok } = await cachedGet(
+    `/api/v1/public/jobs/${encodeURIComponent(slug)}`,
+    REVALIDATE.jobs,
+    PUBLIC_TAGS.jobs,
+  );
   return ok ? data?.job || null : null;
 }
 
@@ -205,17 +232,21 @@ export async function fetchPosts({ page = 1, pageSize = 10, category = null, tag
     tag: tag || undefined,
   });
 
-  const { data, meta } = await cachedGet(path, REVALIDATE.posts);
+  const { data, meta } = await cachedGet(path, REVALIDATE.posts, PUBLIC_TAGS.blog);
   return { posts: data || [], meta: meta || { page, pageSize, total: 0, totalPages: 0 } };
 }
 
 export async function fetchPost(slug) {
-  const { data, ok } = await cachedGet(`/api/v1/public/blog/${encodeURIComponent(slug)}`, REVALIDATE.post);
+  const { data, ok } = await cachedGet(
+    `/api/v1/public/blog/${encodeURIComponent(slug)}`,
+    REVALIDATE.post,
+    PUBLIC_TAGS.blog,
+  );
   return ok ? data?.post || null : null;
 }
 
 export async function fetchBlogTaxonomy() {
-  const { data } = await cachedGet('/api/v1/public/blog-taxonomy', REVALIDATE.posts);
+  const { data } = await cachedGet('/api/v1/public/blog-taxonomy', REVALIDATE.posts, PUBLIC_TAGS.blog);
   return { categories: data?.categories || [], tags: data?.tags || [] };
 }
 
@@ -255,20 +286,6 @@ export async function fetchSession(cookie) {
   const { data, ok } = await adminGet('/api/v1/auth/me', cookie);
   return ok ? data?.user || null : null;
 }
-
-/* -------------------------------------------------------------------------- */
-/* Proxy route target (browser-facing)                                        */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Base path used by Client Components that call this app's own route handlers.
- * Empty in production because the proxy lives at /api; in development it points
- * at the Next dev server.
- */
-export const PROXY_BASE = PUBLIC_API_URL;
-
-/** True when the browser must go through this app to reach the API. */
-export const USES_PROXY = Boolean(PUBLIC_API_URL) || process.env.NODE_ENV === 'production';
 
 export { request, requestOrThrow, resolveUrl };
 export default {

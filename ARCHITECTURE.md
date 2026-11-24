@@ -17,7 +17,7 @@ Two constraints confirmed by the client and applied throughout:
 
 ## 1. Logo analysis
 
-Measured directly from `image.avif` (not eyeballed):
+Measured directly from the source artwork (`apps/web/public/brand/logo.avif`, not eyeballed):
 
 | Property | Value |
 | --- | --- |
@@ -79,7 +79,7 @@ virallink/
 └─ nginx/                      site + api vhost, TLS, caching rules
 ```
 
-Versions pinned from the registry today: `next@16.3.8`, `react@19.3.0`,
+Versions pinned from the registry today: `next@16.4.2`, `react@19.3.0`,
 `tailwindcss@4.3.3`, `express@5.2.1`, `sequelize@6.37.8`, `mysql2@3.24.5`,
 `zod@4.6.5`, `jose@6.2.12`, `bcrypt@6.0.0`, `helmet@8.3.0`,
 `express-rate-limit@8.7.0`, `motion@13.4.6`, `lucide-react@1.49.0`,
@@ -98,21 +98,25 @@ src/
 │  │  ├─ clients/page.js  team/page.js
 │  │  ├─ blog/page.js      blog/[slug]/page.js
 │  │  ├─ contact/page.js  careers/page.js  privacy/page.js  terms/page.js
-│  ├─ admin-teftef/            route group; noindex, authenticated
+│  ├─ vira-admin/              route group; noindex, authenticated
 │  │  ├─ login/page.js
 │  │  ├─ (protected)/layout.js + per-module pages + _components/
-│  ├─ api/auth/                Next route handlers: session cookie issue/clear only
 │  ├─ robots.js  sitemap.js  manifest.js  icon assets
 │  └─ layout.js  not-found.js  error.js  global-error.js  loading.js
 ├─ components/{ui,site,admin,seo,forms}
-├─ lib/{api,seo,auth,utils,constants,format}
+├─ lib/{api,config,seo,auth,utils,constants,format}
+│         api.js → server-side rendering via API_INTERNAL_URL
+│         config.js → browserApiUrl() → direct API origin
 ├─ hooks/
-└─ proxy.js                    redirect gate only (Next 16 renamed middleware)
+└─ proxy.js                    Next 16 route-guard middleware, not an API proxy
+                               (formerly middleware.ts)
 ```
 
 Public pages are Server Components and read through `lib/api` (server-side
-fetcher with Next cache tags). Client components are limited to: contact form,
-mobile nav, cookie-free counters, and admin tables/filters/charts.
+fetcher with Next cache tags) at `API_INTERNAL_URL` — server-to-server rendering,
+not a browser proxy. Client components call the API from the browser through
+`browserApiUrl()` with `credentials: 'include'`: the contact form, admin
+forms/tables/filters/charts, chat and media uploads.
 
 ### apps/api
 
@@ -234,7 +238,7 @@ social_links/testimonials/stats/jobs`, then indexes and FK constraints.
 /contact               form + details + LocalBusiness/Contact schema
 /careers               open roles from DB
 /privacy  /terms       static-ish, admin-editable
-/admin-teftef/*        never in nav, sitemap, or internal links
+/vira-admin/*        never in nav, sitemap, or internal links
 ```
 
 Every list page handles `?page=` and returns `loading.js` / `error.js` /
@@ -246,8 +250,8 @@ title, editable by an admin.
 ## 5. Admin routes and permission system
 
 ```
-/admin-teftef/login  (public-but-noindex)
-/admin-teftef/                 → dashboard
+/vira-admin/login  (public-but-noindex)
+/vira-admin/                 → dashboard
              /employees  /employees/[id]
              /shareholders
              /clients     /clients/[id]
@@ -255,17 +259,18 @@ title, editable by an admin.
              /portfolio   /portfolio/[id]
              /blog        /blog/new  /blog/[id]
              /inquiries   /inquiries/[id]
-             /finance     /finance/transactions  /finance/invoices  /finance/reports
+             /finance     /finance/transactions  /finance/invoices
              /activity
              /settings    /settings/company  /settings/team  /settings/media
 ```
 
-`/admin-teftef` and everything under it is one route group. A `robots.js` plus
+`/vira-admin` and everything under it is one route group. A `robots.js` plus
 `robots.txt` disallow it, every admin page exports
 `metadata: { robots: { index: false, follow: false, nocache: true } }`, and the
 Nginx vhost also emits `X-Robots-Tag: noindex, nofollow` for that prefix.
-`proxy.js` performs a cheap cookie-presence check and redirects to
-`/admin-teftef/login?next=...`; the real session verification and RBAC happen in
+`proxy.js` is the Next 16 route-guard middleware (formerly `middleware.ts`), not
+an API proxy: it performs a cheap cookie-presence check and redirects to
+`/vira-admin/login?next=...`; the real session verification and RBAC happen in
 the server-side data layer and the API. A missing/forged cookie gets no data.
 
 RBAC is a permission matrix in `packages/shared/permissions.js`, seeded into the
@@ -306,7 +311,6 @@ GET    /public/blog          GET /public/blog/:slug
 POST   /contact              rate limited, honeypot, spam score
 CRUD   /employees  /shareholders  /clients  /services  /portfolio  /blog
 CRUD   /finance/transactions  /finance/invoices  /finance/payments  /finance/categories
-GET    /finance/reports/summary?from=&to=
 GET    /dashboard/summary
 GET    /activity             filtered, paginated
 POST   /media  DELETE /media/:id
@@ -344,15 +348,17 @@ diff. Secrets, password fields and file buffers are never stored in metadata.
   sub-page, `FAQPage` when an admin has added FAQs. Admin responses are never
   serialized into public pages.
 - **`app/sitemap.js`** builds sitemap index + children from the DB (only
-  published content), `app/robots.js` emits `Disallow: /admin-teftef` and
-  `/admin-teftef`, `Disallow: /api/`. Nginx adds the `X-Robots-Tag` header as a
+  published content), `app/robots.js` emits `Disallow: /vira-admin` and
+  `/vira-admin`, `Disallow: /api/`. Nginx adds the `X-Robots-Tag` header as a
   third layer.
 - **Performance** — `next/image` with AVIF/WebP, explicit `sizes`, blur
   placeholders, fonts via `next/font` self-hosted with `display: swap`, no
   animation library on public routes beyond small CSS transitions, dynamic
   imports for the charts and admin bundle. Admin code lives in its own route
   group so none of it reaches the public bundle. Target: LCP < 2.0s, CLS < 0.05,
-  INP < 200ms on a mid-range Android over 4G.
+  INP < 200ms on a mid-range Android over 4G. The font files are vendored in
+  `apps/web/app/fonts/` and loaded with `next/font/local`, so a build never
+  depends on reaching Google and always produces the same output.
 - **Content integrity** — no keyword stuffing, no fabricated statistics, awards or
   testimonials. Empty sections hide themselves rather than rendering placeholders.
 
@@ -382,7 +388,7 @@ by what cPanel actually provides. Full runbook in `docs/DEPLOYMENT.md`.
 Browser
   ↓ HTTPS (cPanel AutoSSL, forced redirect)
 Apache / LiteSpeed  ← runs .htaccess: security headers, gzip/brotli,
-  │                    /admin-teftef X-Robots-Tag, static + /media cache
+  │                    /vira-admin X-Robots-Tag, static + /media cache
   ├─ Passenger "Setup Node.js App" #1  →  apps/web   (Next.js 16)
   └─ Passenger "Setup Node.js App" #2  →  apps/api   (Express 5)
                                               ↓
@@ -402,8 +408,11 @@ cPanel specifics that shape the build:
 
 - **Two Node apps, one per process.** `apps/web` starts `node_modules/.bin/next start`
   on its assigned port; `apps/api` starts `server.js` on its own. Both listen on
-  `127.0.0.1`; Passenger maps them. `API_INTERNAL_URL` is used server-to-server so
-  app-to-app calls never cross the public internet.
+  `127.0.0.1`; Passenger maps them. `API_INTERNAL_URL` is for server-side
+  rendering only (`lib/api.js` / `adminData`): when the API is exposed at its own
+  origin such as `https://api.virallinkdigital.com`, it is set to that URL instead
+  of the loopback address. Browser requests never use it — they go to
+  `NEXT_PUBLIC_API_PUBLIC_URL` via `browserApiUrl()`.
 - **`output: 'standalone'` is not used.** Passenger owns the process lifecycle and
   expects `node_modules` to exist in the app root, which standalone output would
   strip. Standard `next build` output is used instead, with `.npmrc` to keep
@@ -418,9 +427,11 @@ cPanel specifics that shape the build:
   `npm run backup`; activity-log pruning and token-blocklist cleanup on the same
   cron. No long-lived in-process schedulers, since Passenger restarts apps
   unpredictably on shared plans.
-- **Env management** uses the cPanel "Environment Variables" UI plus a `.env` in
-  the app root; `config/env.js` validates with zod at boot so a missing variable
-  fails fast with its name rather than surfacing as a runtime 500.
+- **Env management** is split per app: `apps/api/.env` (backend; zod-validated at
+  boot by `config/env.js`) and `apps/web/.env` (frontend; Next.js loads it).
+  Each app is independent and needs only its own file; inline `.env` entries are
+  honoured by the API when `.env` is unavailable. The cPanel "Environment
+  Variables" UI works for either.
 - **Resource discipline.** Passenger enforces per-app memory limits and kills
   over-limit processes, so connection pooling is capped (Sequelize pool max 5),
   image processing is queued through `sharp`'s concurrency limiter, and Recharts

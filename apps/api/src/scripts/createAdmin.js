@@ -13,8 +13,8 @@ import bcrypt from 'bcrypt';
 import env from '../config/env.js';
 import sequelize from '../config/database.js';
 import { models } from '../models/index.js';
-import { ROLES } from '@virallink/shared/enums';
-import { passwordSchema, WEAK_PASSWORDS } from '@virallink/shared/schemas';
+import { ROLES } from '../shared/enums.js';
+import { passwordSchema, WEAK_PASSWORDS } from '../shared/schemas.js';
 import { recordActivity } from '../middleware/audit.js';
 
 const { User, Role, Permission } = models;
@@ -37,12 +37,26 @@ function parseArgs(argv) {
   return args;
 }
 
-/** Ask again on an invalid password, up to a few attempts. */
+/**
+ * Ask again on an invalid password, up to a few attempts.
+ *
+ * When stdin is not a TTY there is no terminal to echo-hide from and no way to
+ * ask twice, so a single line is read instead. That is what makes this script
+ * usable from a heredoc or a CI step:
+ *
+ *   printf '%s\n' "$PASSWORD" | node src/scripts/createAdmin.js \
+ *     --email admin@example.com --name "Admin" --role SUPER_ADMIN
+ *
+ * Without this branch the confirmation prompt never resolves once the pipe is
+ * drained, Node runs out of handles and exits silently having created nothing.
+ */
 async function promptForPassword(rl, label, { confirm = true } = {}) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const value = await rl.question(`${label}: `, { hideEchoBack: true });
+  const interactive = Boolean(process.stdin.isTTY);
 
-    if (confirm) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const value = await rl.question(`${label}: `, interactive ? { hideEchoBack: true } : {});
+
+    if (confirm && interactive) {
       const again = await rl.question(`${label} (confirm): `, { hideEchoBack: true });
       if (value !== again) {
         console.error('Those did not match. Try again.');
@@ -70,15 +84,31 @@ async function main() {
   let name = args.name;
   let email = args.email;
   let role = args.role || ROLES.SUPER_ADMIN;
-  let password = args.password;
 
-  if (!useCli) {
-    console.log('\nVirallink — create an administrator account\n');
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    name = (await rl.question('Full name: ')).trim();
-    email = (await rl.question('Email: ')).trim().toLowerCase();
-    role = (await rl.question(`Role [${Object.values(ROLES).join(' / ')}]: `)).trim() || ROLES.SUPER_ADMIN;
+  // The password is never read from argv. Arguments land in shell history and in
+  // the process list, so it is always typed at the prompt even when the other
+  // fields are passed as flags. Accepting `--password` here was the reason this
+  // script could not be used from a script or a heredoc at all: `--email` skipped
+  // the prompt, and the only way to supply a password afterwards was the flag
+  // this script refuses.
+  let password = null;
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    if (useCli) {
+      console.log(`\nVirallink — create a ${role} account for ${email}\n`);
+    } else {
+      console.log('\nVirallink — create an administrator account\n');
+      name = (await rl.question('Full name: ')).trim();
+      email = (await rl.question('Email: ')).trim().toLowerCase();
+      role =
+        (await rl.question(`Role [${Object.values(ROLES).join(' / ')}]: `)).trim() ||
+        ROLES.SUPER_ADMIN;
+    }
+
     password = await promptForPassword(rl, 'Password');
+  } finally {
     rl.close();
   }
 
@@ -88,7 +118,7 @@ async function main() {
   }
 
   if (!password) {
-    console.error('\nRefusing to accept a password on the command line.\nRun without --password and type it at the prompt instead.');
+    console.error('\nNo password was supplied. Run the command again and type one at the prompt.');
     process.exit(1);
   }
 
@@ -144,7 +174,7 @@ async function main() {
 
   console.log(`\nCreated ${role} account: ${email}`);
   console.log(`Granted ${roleRow.permissions.length} permissions.`);
-  console.log(`Sign in at /admin-teftef/login\n`);
+  console.log(`Sign in at /vira-admin/login\n`);
 
   await sequelize.close();
   process.exit(0);

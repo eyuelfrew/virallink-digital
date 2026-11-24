@@ -26,8 +26,15 @@ import {
   SHARE_CLASS,
   ACTIVITY_ACTION,
   MEDIA_KIND,
+  TASK_STATUS,
+  TASK_PRIORITY,
+  DELIVERABLE_TYPE,
+  METRIC_PLATFORM,
+  METRIC_SOURCE,
+  CONTENT_STAGE,
+  PROPOSAL_STATUS,
   valuesOf,
-} from '@virallink/shared/enums';
+} from '../shared/enums.js';
 
 /** Column factories, so each entry below stays readable. */
 const pk = () => ({ type: DataTypes.BIGINT.UNSIGNED, autoIncrement: true, primaryKey: true });
@@ -90,12 +97,74 @@ export const definitions = {
     },
   },
 
+  PushToken: {
+    tableName: 'push_tokens',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      token: { type: DataTypes.STRING(512), allowNull: false },
+      platform: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'android' },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['token'], name: 'push_tokens_token_unique' },
+        { fields: ['userId'], name: 'push_tokens_user_idx' },
+      ],
+    },
+    /*
+     * Device tokens are not soft-deleted: a revoked token is a deleted row.
+     * There is no "archive" use case for them, and soft delete would only
+     * leave stale rows behind.
+     */
+    paranoid: false,
+  },
+
+  PushOutbox: {
+    tableName: 'push_outbox',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      kind: { type: DataTypes.STRING(60), allowNull: false },
+      payload: { type: DataTypes.JSON, allowNull: false },
+      status: {
+        type: DataTypes.ENUM('pending', 'sent', 'failed'),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      attempts: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      lastError: { type: DataTypes.STRING(250), allowNull: true, defaultValue: null },
+      sentAt: optionalDate(),
+      readAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['status', 'createdAt'], name: 'push_outbox_status_created_idx' },
+        { fields: ['userId', 'readAt'], name: 'push_outbox_user_read_idx' },
+      ],
+    },
+    /*
+     * Outbox rows are hard-deleted once delivered (or after exhausting
+     * retries) by the drain; there is no archive use case for them.
+     */
+    paranoid: false,
+  },
+
   User: {
     tableName: 'users',
     fields: {
       id: pk(),
       name: { type: DataTypes.STRING(120), allowNull: false },
-      email: { type: DataTypes.STRING(191), allowNull: false, unique: true },
+      /*
+       * Any one of email, username or phone is enough to sign in. All three
+       * are nullable and unique where set, so an account can be reached by
+       * whichever handle its holder prefers — an email for an administrator, a
+       * username (Telegram-style) or a phone number for an employee who never
+       * wanted an email address. MySQL treats NULL as distinct in a unique
+       * index, so many accounts can share "no email".
+       */
+      email: { type: DataTypes.STRING(191), allowNull: true, unique: true },
+      username: { type: DataTypes.STRING(64), allowNull: true, unique: true },
+      phone: { type: DataTypes.STRING(60), allowNull: true, unique: true },
       /** bcrypt digest only. Plaintext passwords are never persisted. */
       passwordHash: { type: DataTypes.STRING(120), allowNull: false },
       isActive: booleanDefault(true),
@@ -108,11 +177,227 @@ export const definitions = {
       failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       lockedUntil: optionalDate(),
       passwordChangedAt: optionalDate(),
+      /**
+       * The employee record this account signs in as — the bridge between
+       * "who may sign in" and "who tasks are assigned to". Nullable:
+       * administrators need no employee record. Deleted employees unlink
+       * themselves (FK ON DELETE SET NULL) rather than taking the account with them.
+       */
+      employeeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /**
+       * Role for granular permissions. Null for SUPER_ADMIN/ADMIN who have all permissions.
+       * When set, this role determines the user's capabilities alongside the role's permissions.
+       */
+      role: { type: DataTypes.STRING(60), allowNull: true, defaultValue: null },
+      /**
+       * Telegram identity. `telegramChatId` is the permanent handle the bot uses to
+       * reach this person; it is claimed through a one-time `telegramLinkCode` so a
+       * user proves ownership by messaging the bot, never by typing an id.
+       */
+      telegramChatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      telegramUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      telegramLinkedAt: optionalDate(),
+      telegramLinkCode: { type: DataTypes.STRING(48), allowNull: true, defaultValue: null },
+      telegramLinkCodeExpiresAt: optionalDate(),
+      /** Per-person opt-out; linking does not force notifications on someone. */
+      telegramAlertsEnabled: booleanDefault(true),
+      /**
+       * Set when an administrator sets a password on somebody's behalf. The
+       * account can sign in, but the console is refused until the holder
+       * chooses a password of their own.
+       */
+      mustChangePassword: booleanDefault(false),
     },
     options: {
-      indexes: [{ fields: ['email'] }, { fields: ['isActive'] }],
+      indexes: [
+        { fields: ['email'] },
+        { fields: ['username'] },
+        { fields: ['phone'] },
+        { fields: ['isActive'] },
+        { fields: ['employeeId'] },
+        { unique: true, fields: ['telegramChatId'], name: 'users_telegram_chat_id_unique' },
+        { unique: true, fields: ['username'], name: 'users_username_unique' },
+        { unique: true, fields: ['phone'], name: 'users_phone_unique' },
+      ],
     },
     paranoid: true,
+  },
+
+  /* ================================================================== */
+  /* User chat                                                            */
+  /* ================================================================== */
+
+  Conversation: {
+    tableName: 'conversations',
+    fields: {
+      id: pk(),
+      /** False = private 1:1 chat; True = multi-person group. */
+      isGroup: booleanDefault(false),
+      /** Group title. Null for private chats — the pair name is derived at read time. */
+      title: shortText(),
+      /** The person who started the chat. Context only; membership is the members table. */
+      creatorId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Newest message activity so far. Drives the unread badge ordering. */
+      lastMessageAt: optionalDate(),
+      /** When the conversation was pinned by a member; null when not pinned. */
+      pinnedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['isGroup'] },
+        { fields: ['lastMessageAt'], name: 'conversations_last_message_at_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  ConversationMember: {
+    tableName: 'conversation_members',
+    fields: {
+      id: pk(),
+      conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      isMuted: booleanDefault(false),
+      /**
+       * Highest message id this member has consumed. NULL means "nothing read
+       * yet", so a brand-new conversation is unread until you open it.
+       */
+      lastReadMessageId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['conversationId', 'userId'], name: 'conversation_members_pair_unique' },
+        { fields: ['userId'], name: 'conversation_members_user_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  Message: {
+    tableName: 'messages',
+    fields: {
+      id: pk(),
+      conversationId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      text: longText(),
+      /** The message being replied to; null on the first of a thread. */
+      replyToId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Optional image attached to the message. */
+      imageMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Set when the sender edits their own text. */
+      editedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['conversationId', 'createdAt'], name: 'messages_conversation_created_idx' },
+        { fields: ['userId'], name: 'messages_user_idx' },
+        { fields: ['imageMediaId'], name: 'messages_image_media_id_idx' },
+      ],
+    },
+    paranoid: true,
+  },
+
+  MessageReaction: {
+    tableName: 'message_reactions',
+    fields: {
+      id: pk(),
+      messageId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      emoji: { type: DataTypes.STRING(40), allowNull: false },
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['messageId', 'userId', 'emoji'], name: 'message_reactions_message_user_emoji_unique' },
+        { fields: ['messageId'], name: 'message_reactions_message_idx' },
+        { fields: ['userId'], name: 'message_reactions_user_idx' },
+      ],
+    },
+    paranoid: false,
+  },
+
+  /**
+   * Password reset tokens.
+   *
+   * One row per reset request. The code itself is never stored — only a
+   * SHA-256 digest of `userId:code` — so a copy of the database does not hand
+   * an attacker a set of working reset codes.
+   *
+   * Rows are consumed rather than deleted, so a spent code stays visible as
+   * evidence that it was used, and a replay can be told apart from a first
+   * attempt.
+   */
+  PasswordResetToken: {
+    tableName: 'password_reset_tokens',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /**
+       * sha256(`${userId}:${code}`) — never the code itself.
+       *
+       * Nullable: when the code comes back through a Telegram link rather
+       * than straight to a linked chat, it does not exist until the link is
+       * opened, because a digest cannot be turned back into the six digits
+       * the bot has to send.
+       */
+      codeHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      /** When the code — or the link that carries it — stops working. */
+      expiresAt: { type: DataTypes.DATE, allowNull: false },
+      /** How many wrong guesses have been charged against this code. */
+      attempts: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      /** Set when the code is redeemed, or when it runs out of attempts. */
+      consumedAt: optionalDate(),
+      /**
+       * The one-time secret carried in the `t.me` deep link, hashed. It is
+       * what lets somebody who has not linked Telegram yet receive a code:
+       * opening the link starts the bot, and the bot replies with it.
+       */
+      deliveryTokenHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      /** When the link was first opened. */
+      deliveredAt: optionalDate(),
+      /** The chat the code was delivered to. */
+      deliveryChatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      /** Where the request came from, for the security log. */
+      ip: { type: DataTypes.STRING(45), allowNull: true, defaultValue: null },
+    },
+    options: {
+      indexes: [
+        { fields: ['userId', 'createdAt'] },
+        { fields: ['userId'] },
+        { fields: ['deliveryTokenHash'] },
+      ],
+    },
+  },
+
+  /**
+   * Outbound Telegram queue.
+   *
+   * Messages are written here and delivered by a separate drain step, so a
+   * recycled Passenger process between "task assigned" and "message sent" cannot
+   * lose a notification. Also carries retries and a record of what went out.
+   */
+  TelegramOutbox: {
+    tableName: 'telegram_outbox',
+    fields: {
+      id: pk(),
+      /** Target person. Null when a message goes to a fixed chat (announcements). */
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Explicit chat id, used instead of userId when set. */
+      chatId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      /** Short event key, e.g. "task_assigned", for filtering and metrics. */
+      kind: { type: DataTypes.STRING(40), allowNull: false },
+      /** Rendered message: { text, parseMode?, buttons? }. */
+      payload: { type: DataTypes.JSON, allowNull: false },
+      status: { type: DataTypes.ENUM('pending', 'sent', 'failed'), allowNull: false, defaultValue: 'pending' },
+      attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      lastError: { type: DataTypes.STRING(255), allowNull: true, defaultValue: null },
+      sentAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['status', 'createdAt'] },
+        { fields: ['userId'] },
+      ],
+    },
   },
 
   /**
@@ -543,6 +828,213 @@ export const definitions = {
   },
 
   /* ================================================================== */
+  /* Tasks                                                               */
+  /* ================================================================== */
+
+  /*
+   * Internal work items. Deliberately never exposed through the public API or
+   * any serializer in serializers/public.js — this is staff workload, not
+   * marketing content, and a task title can name a client or a deadline that
+   * should not be crawlable.
+   *
+   * The optional links are plain columns rather than associations on the
+   * assignment side: a task should still open if the client or project it
+   * referenced is later deleted, and a soft-deleted row must not take the task
+   * with it.
+   */
+  Task: {
+    tableName: 'tasks',
+    fields: {
+      id: pk(),
+      title: { type: DataTypes.STRING(200), allowNull: false },
+      description: longText(),
+      status: { type: DataTypes.ENUM(...valuesOf(TASK_STATUS)), allowNull: false, defaultValue: TASK_STATUS.TODO },
+      priority: { type: DataTypes.ENUM(...valuesOf(TASK_PRIORITY)), allowNull: false, defaultValue: TASK_PRIORITY.MEDIUM },
+      /** The staff member responsible (legacy Employee). Not a foreign key, so the row survives deletion. */
+      assigneeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** The user responsible (modern User-based assignment). Takes precedence over assigneeId when set. */
+      assigneeUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      projectId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      dueDate: optionalDate(DataTypes.DATEONLY),
+      /** Stamped when status first becomes done, so "closed this month" is a query. */
+      completedAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        // The board's default query: open tasks, most urgent and nearest due first.
+        { fields: ['status', 'priority'] },
+        { fields: ['assigneeId', 'status'] },
+        { fields: ['dueDate'] },
+      ],
+    },
+    paranoid: true,
+  },
+
+  /* ================================================================== */
+  /* Client reporting                                                    */
+  /* ================================================================== */
+
+  /*
+   * Two tables, deliberately split.
+   *
+   * content_deliverables is *what we produced*: "a June reel for Acme". That is
+   * the count a client asks about first ("how many videos did you make me this
+   * month"), so it is a row in its own right rather than an attribute of a metric.
+   *
+   * content_metrics is *how it performed*: views, likes and comments for one
+   * deliverable in one month on one platform. Folding these together would make
+   * "videos produced" and "videos with views" the same number, and the two rarely
+   * are — content is often delivered late and accrues views afterwards.
+   *
+   * `month` is a zero-padded CHAR(7) string, not a DATE. Grouping on a string is
+   * exact, sorts chronologically, and cannot shift a bucket across a month
+   * boundary through a timezone. The zod schema validates it as a real YYYY-MM.
+   */
+  ContentDeliverable: {
+    tableName: 'content_deliverables',
+    fields: {
+      id: pk(),
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      title: { type: DataTypes.STRING(191), allowNull: false },
+      type: { type: DataTypes.ENUM(...valuesOf(DELIVERABLE_TYPE)), allowNull: false, defaultValue: DELIVERABLE_TYPE.VIDEO },
+      platform: { type: DataTypes.ENUM(...valuesOf(METRIC_PLATFORM)), allowNull: false, defaultValue: METRIC_PLATFORM.OTHER },
+      /** Where it was published. Null while the work exists but is not live yet. */
+      url: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      publishedAt: optionalDate(),
+      /** Only set when we actually host the file; most rows leave this null. */
+      mediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      notes: longText(),
+
+      /* ---- Production pipeline -------------------------------------- */
+      /*
+       * `stage` defaults to posted, not idea. Rows created before the pipeline
+       * existed were logged as finished work, so defaulting them to 'idea' would
+       * fill the board with a backlog that never existed.
+       */
+      stage: {
+        type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)),
+        allowNull: false,
+        defaultValue: CONTENT_STAGE.POSTED,
+      },
+      /** The day the crew is booked. A cost, fixed in advance. */
+      shootDate: optionalDate(DataTypes.DATEONLY),
+      /** When it is planned to go live, as distinct from when it did. */
+      scheduledFor: optionalDate(DataTypes.DATEONLY),
+      assigneeId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /**
+       * How many times this came back from the client. Null means it was never
+       * sent for approval, which is not the same as sent once and accepted first
+       * time — the difference matters when reporting an approval rate.
+       */
+      revisionCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      /** One field per pipeline step so later material never overwrites earlier. */
+      idea: longText(),
+      brainstormNotes: longText(),
+      scriptBody: longText(),
+      approvalNotes: longText(),
+    },
+    options: {
+      indexes: [
+        // The report's core query: everything for one client in one month.
+        { fields: ['clientId', 'publishedAt'] },
+        { fields: ['clientId', 'type'] },
+        // The board's primary query: open work, by stage, soonest shoot first.
+        { fields: ['stage', 'shootDate'] },
+        { fields: ['scheduledFor'] },
+      ],
+    },
+    paranoid: true,
+  },
+
+  /*
+   * Append-only history of stage changes.
+   *
+   * This exists because current state cannot answer "how long does approval
+   * take" — once a card has moved on, its previous timestamps are gone. Every move
+   * writes a row recording when it entered the new stage, so cycle time per stage
+   * is a GROUP BY rather than a reconstruction.
+   *
+   * No `deletedAt`: this is a record of what happened, and a change to it cannot
+   * be silently undone by a stray delete.
+   */
+  ContentStageEvent: {
+    tableName: 'content_stage_events',
+    fields: {
+      id: pk(),
+      deliverableId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      fromStage: { type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)), allowNull: true, defaultValue: null },
+      toStage: { type: DataTypes.ENUM(...valuesOf(CONTENT_STAGE)), allowNull: false },
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Why it moved. Essential on a return from approval. */
+      note: longText(),
+    },
+    options: {
+      // Cycle time is "time spent in toStage", so this index serves every
+      // stage-duration figure the weekly report shows.
+      indexes: [{ fields: ['toStage', 'createdAt'] }, { fields: ['deliverableId'] }],
+    },
+  },
+
+  /*
+   * An idea pack or proposal put to a client. Upstream of the pipeline rather than
+   * part of it: an accepted proposal becomes content, a draft one is only a
+   * document. Keeping it separate stops "we pitched this" cluttering the board.
+   */
+  ClientProposal: {
+    tableName: 'client_proposals',
+    fields: {
+      id: pk(),
+      clientId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      title: { type: DataTypes.STRING(191), allowNull: false },
+      summary: longText(),
+      /** What is being proposed, e.g. "4 videos + 8 stories per month". */
+      scope: longText(),
+      status: {
+        type: DataTypes.ENUM(...valuesOf(PROPOSAL_STATUS)),
+        allowNull: false,
+        defaultValue: PROPOSAL_STATUS.DRAFT,
+      },
+      value: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: null },
+      proposedStart: optionalDate(DataTypes.DATEONLY),
+      /** When the client answered. Null while still awaiting a decision. */
+      respondedAt: optionalDate(),
+    },
+    options: { indexes: [{ fields: ['clientId', 'status'] }] },
+    paranoid: true,
+  },
+
+  ContentMetric: {
+    tableName: 'content_metrics',
+    fields: {
+      id: pk(),
+      deliverableId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /** 'YYYY-MM'. Zero padded so lexical order is chronological order. */
+      month: { type: DataTypes.STRING(7), allowNull: false },
+      platform: { type: DataTypes.ENUM(...valuesOf(METRIC_PLATFORM)), allowNull: false, defaultValue: METRIC_PLATFORM.OTHER },
+      /**
+       * Nullable rather than defaulting to 0, so the report can distinguish "not
+       * measured" from "measured and genuinely zero" — which is the first question
+       * a client asks about a blank figure.
+       */
+      views: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      likes: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      comments: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      shares: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Decimal, not integer: 12.5 hours of watch time is an ordinary figure. */
+      watchHours: { type: DataTypes.DECIMAL(12, 2), allowNull: true, defaultValue: null },
+      /** `manual` today; `api` reserved for a future platform sync. */
+      source: { type: DataTypes.ENUM(...valuesOf(METRIC_SOURCE)), allowNull: false, defaultValue: METRIC_SOURCE.MANUAL },
+    },
+    options: {
+      // One row per deliverable per month per platform. Enforced by the database
+      // as well as the service, so two staff saving at once cannot double-count.
+      indexes: [{ fields: ['deliverableId', 'month', 'platform'], unique: true }],
+    },
+    paranoid: true,
+  },
+
+  /* ================================================================== */
   /* Finance                                                             */
   /* ================================================================== */
 
@@ -796,6 +1288,222 @@ export const definitions = {
         { fields: ['userId'] },
         { fields: ['action'] },
         { fields: ['createdAt'] },
+      ],
+    },
+  },
+
+  TelegramUserAccount: {
+    tableName: 'telegram_user_accounts',
+    fields: {
+      id: pk(),
+      userId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, unique: true },
+      apiId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+      /** AES-256-GCM encrypted; never sent to the browser. */
+      apiHash: longText(),
+      phoneNumber: longText(),
+      sessionString: longText(),
+      telegramUserId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      accountFirstName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountLastName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      status: {
+        type: DataTypes.ENUM('disconnected', 'code_sent', 'password_required', 'connected', 'error'),
+        allowNull: false,
+        defaultValue: 'disconnected',
+      },
+      lastError: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      lastConnectedAt: optionalDate(),
+    },
+    options: {
+      indexes: [{ unique: true, fields: ['userId'], name: 'telegram_user_accounts_user_unique' }],
+    },
+  },
+
+  TelegramAutoReplyAccount: {
+    tableName: 'telegram_auto_reply_accounts',
+    fields: {
+      id: pk(),
+      ownerUserId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Set when provider = 'account'; the owner's MTProto credential row. */
+      userAccountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      name: { type: DataTypes.STRING(120), allowNull: false },
+      provider: { type: DataTypes.ENUM('env', 'custom', 'account'), allowNull: false, defaultValue: 'custom' },
+      telegramBotId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      telegramUserId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      botUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      accountFirstName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountLastName: { type: DataTypes.STRING(160), allowNull: true, defaultValue: null },
+      accountUsername: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      botToken: longText(),
+      webhookSecret: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+      isCompany: booleanDefault(false),
+      isActive: booleanDefault(true),
+      webhookStatus: {
+        type: DataTypes.ENUM('pending', 'active', 'error'),
+        allowNull: false,
+        defaultValue: 'pending',
+      },
+      connectionStatus: {
+        type: DataTypes.ENUM('new', 'code_sent', 'password_required', 'connected', 'disconnected', 'error'),
+        allowNull: false,
+        defaultValue: 'new',
+      },
+      lastError: { type: DataTypes.STRING(500), allowNull: true, defaultValue: null },
+      lastSyncedAt: optionalDate(),
+      lastLoginAt: optionalDate(),
+    },
+    options: {
+      indexes: [
+        { fields: ['ownerUserId'] },
+        { fields: ['provider'] },
+        { unique: true, fields: ['telegramBotId'], name: 'telegram_auto_reply_accounts_bot_id_unique' },
+        { unique: true, fields: ['userAccountId'], name: 'telegram_auto_reply_accounts_user_account_unique' },
+        { fields: ['isCompany'] },
+      ],
+    },
+  },
+
+  TelegramAutoReplyRule: {
+    tableName: 'telegram_auto_reply_rules',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      name: { type: DataTypes.STRING(120), allowNull: false },
+      trigger: {
+        type: DataTypes.ENUM('any', 'new_chat', 'returning_chat', 'keyword', 'exact', 'regex'),
+        allowNull: false,
+        defaultValue: 'keyword',
+      },
+      keywords: longText(),
+      replyText: longText(),
+      sendCatalog: booleanDefault(false),
+      /** Ordered media ids sent as a photo album after the reply text. */
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      /** The single audio file sent after the reply text — a voice note or a sound bite. */
+      audioMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Re-attach the interactive menu keyboard after this rule's reply. */
+      showMenu: booleanDefault(false),
+      cooldownMinutes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      priority: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+      stopProcessing: booleanDefault(true),
+      isActive: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { fields: ['accountId', 'isActive', 'priority'], name: 'telegram_rules_account_active_priority_idx' },
+      ],
+    },
+  },
+
+  TelegramAutoReplySettings: {
+    tableName: 'telegram_auto_reply_settings',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, unique: true },
+      isEnabled: booleanDefault(true),
+      welcomeMessage: longText(),
+      awayMessage: longText(),
+      awayMode: booleanDefault(true),
+      awayCooldownMinutes: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 360 },
+      catalogEnabled: booleanDefault(true),
+      catalogIntro: longText(),
+      menuEnabled: booleanDefault(false),
+      menuTitle: { type: DataTypes.STRING(300), allowNull: true, defaultValue: null },
+      replyToNewChats: booleanDefault(true),
+      replyToReturningChats: booleanDefault(true),
+    },
+    options: { indexes: [{ unique: true, fields: ['accountId'], name: 'telegram_auto_reply_settings_account_unique' }] },
+  },
+
+  TelegramCatalogItem: {
+    tableName: 'telegram_catalog_items',
+    fields: {
+      id: pk(),
+      name: { type: DataTypes.STRING(191), allowNull: false },
+      description: longText(),
+      price: { type: DataTypes.DECIMAL(14, 2), allowNull: true, defaultValue: null },
+      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'ETB' },
+      imageMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      /** Extra ordered media ids; sent as a photo album instead of a single photo. */
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      isActive: booleanDefault(true),
+      displayOrder: orderIndex(),
+    },
+    options: {
+      indexes: [
+        { fields: ['isActive', 'displayOrder'] },
+        { fields: ['imageMediaId'] },
+      ],
+    },
+  },
+
+  /**
+   * Per-chat state for the auto-reply.
+   *
+   * This is deliberately not a conversation. Nothing that a client wrote is
+   * kept: no message text, no name, no username, no title, no counters, no
+   * history. What remains is the little the auto-reply needs to behave
+   * itself:
+   *
+   *   - `lastAwayReplyAt` — when this chat last got the away message, which is
+   *     what the cooldown is measured from;
+   *   - `lastRuleId` / `lastRuleReplyAt` — the same for a reply rule's own
+   *     cooldown;
+   *   - `lastReplyAt` — the floor between two replies;
+   *   - `isBlocked` / `autoReplyEnabled` — the per-chat switches;
+   *   - `lastTelegramMessageId` — a sequence number, not content, kept so a
+   *     retried webhook is not answered twice.
+   *
+   * One row per chat, indexed on (account, chat). A studio with a hundred
+   * thousand clients still holds a hundred thousand small rows and nothing
+   * readable about any of them.
+   */
+  TelegramAutoReplyChatState: {
+    tableName: 'telegram_auto_reply_chat_state',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      chatId: { type: DataTypes.BIGINT, allowNull: false },
+      /** The last Telegram message id seen, so a retried update is ignored. */
+      lastTelegramMessageId: { type: DataTypes.BIGINT, allowNull: true, defaultValue: null },
+      lastReplyAt: optionalDate(),
+      lastAwayReplyAt: optionalDate(),
+      lastRuleId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      lastRuleReplyAt: optionalDate(),
+      isBlocked: booleanDefault(false),
+      autoReplyEnabled: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { unique: true, fields: ['accountId', 'chatId'], name: 'telegram_chat_state_account_chat_unique' },
+        { fields: ['accountId', 'isBlocked'] },
+      ],
+    },
+  },
+
+  TelegramMenuButton: {
+    tableName: 'telegram_menu_buttons',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      /** Null = top-level button; set = button inside a submenu. */
+      parentId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, defaultValue: null },
+      label: { type: DataTypes.STRING(64), allowNull: false },
+      action: {
+        type: DataTypes.ENUM('catalog', 'text', 'album', 'url', 'submenu', 'menu'),
+        allowNull: false,
+        defaultValue: 'text',
+      },
+      replyText: longText(),
+      url: { type: DataTypes.STRING(2048), allowNull: true, defaultValue: null },
+      imageMediaIds: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
+      displayOrder: orderIndex(),
+      isActive: booleanDefault(true),
+    },
+    options: {
+      indexes: [
+        { fields: ['accountId', 'isActive', 'displayOrder'], name: 'telegram_menu_buttons_account_order_idx' },
+        { fields: ['parentId'] },
       ],
     },
   },

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import AppError from '../utils/AppError.js';
 import env from '../config/env.js';
@@ -13,7 +14,13 @@ import logger from '../config/logger.js';
  *                        while the stack stays in the logs
  */
 export function errorHandler(error, request, response, _next) {
-  const requestId = request.id;
+  /*
+   * CORS runs before requestContext, so a rejected origin reaches this handler
+   * without an id. Always have one: otherwise JSON.stringify drops the
+   * undefined requestId and the response is indistinguishable from a proxy
+   * error page when debugging cross-origin failures.
+   */
+  const requestId = request.id || randomUUID();
 
   if (error instanceof AppError) {
     logger.warn(
@@ -49,6 +56,29 @@ export function errorHandler(error, request, response, _next) {
     });
   }
 
+  /*
+   * A unique-index violation is a conflict, not a bug. Reaching here means the
+   * caller did not anticipate it — most often a value still held by a
+   * soft-deleted row, which the paranoid scope hides. Reporting 409 names the
+   * offending column instead of returning an opaque 500.
+   */
+  if (error.name === 'SequelizeUniqueConstraintError') {
+    const fields = Object.keys(error.fields || {});
+
+    logger.warn(
+      { req: { id: requestId, method: request.method, path: request.originalUrl }, fields },
+      'unique constraint violation',
+    );
+
+    return response.status(409).json({
+      error: {
+        code: 'CONFLICT',
+        message: fields.length ? `That ${fields.join(' and ')} is already in use` : 'That value is already in use',
+        requestId,
+      },
+    });
+  }
+
   // Body parser failures (malformed JSON, oversized payload).
   if (error.type === 'entity.parse.failed' || error instanceof SyntaxError) {
     return response.status(400).json({
@@ -76,6 +106,26 @@ export function errorHandler(error, request, response, _next) {
   if (error.code === 'LIMIT_UNEXPECTED_FILE' || error.code === 'LIMIT_FILE_COUNT') {
     return response.status(400).json({
       error: { code: 'INVALID_UPLOAD', message: 'Too many files, or an unexpected file field', requestId },
+    });
+  }
+
+  /*
+   * Middleware that runs before requestContext can still signal a deliberate
+   * client rejection — most notably CORS, which rejects disallowed origins with
+   * a 403. Preserve that status (and its safe message) instead of turning a
+   * configuration problem into an opaque 500. Only 4xx errors are surfaced, and
+   * this sits AFTER the specific handlers above so parser errors keep their own
+   * safe, generic messages instead of leaking a raw JSON parse error string.
+   */
+  const status = error.statusCode || error.status;
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    logger.warn(
+      { req: { id: requestId, method: request.method, path: request.originalUrl }, status, msg: error.message },
+      'request rejected by middleware',
+    );
+
+    return response.status(status).json({
+      error: { code: error.code || 'REQUEST_REJECTED', message: error.message || 'Request rejected', requestId },
     });
   }
 

@@ -4,14 +4,18 @@ import { useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Search, X } from 'lucide-react';
+import { NavIcon } from './icons';
 
 /**
- * Toolbar for admin tables: search box and select filters.
+ * Toolbar for admin tables: search box and select/date filters.
  *
  * Filters are applied by navigating with query parameters rather than filtering in
  * memory, which means filtering happens in SQL, the URL is shareable, and the
  * server component re-renders with the filtered data. No client-side data
  * fetching, so the page stays a Server Component.
+ *
+ * A filter is a select by default. `type: 'date'` renders a date input instead,
+ * which the finance list needs for a `from`/`to` range.
  */
 
 /** A form that submits on change, for the select filters. */
@@ -45,8 +49,8 @@ export function AdminToolbar({ basePath, searchPlaceholder = 'Search', currentSe
   const hasActiveFilters = Object.values(currentFilters).some(Boolean) || Boolean(currentSearch);
 
   return (
-    <div className="flex flex-col gap-3 border-b border-line px-5 py-3 sm:flex-row sm:items-center">
-      <form onSubmit={submitSearch} className="relative flex-1">
+    <div className="flex flex-col gap-3 border-b border-line px-5 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <form onSubmit={submitSearch} className="relative flex-1 sm:min-w-56">
         <label htmlFor="admin-search" className="sr-only">
           {searchPlaceholder}
         </label>
@@ -66,27 +70,49 @@ export function AdminToolbar({ basePath, searchPlaceholder = 'Search', currentSe
         />
       </form>
 
-      {filters.map((filter) => (
-        <div key={filter.name}>
-          <label htmlFor={`filter-${filter.name}`} className="sr-only">
-            {filter.label}
-          </label>
+      {filters.map((filter) => {
+        // A date range reads better with a visible label than with an empty
+        // placeholder option, so it is laid out differently from a select.
+        if (filter.type === 'date') {
+          return (
+            <div key={filter.name} className="flex items-center gap-2">
+              <label htmlFor={`filter-${filter.name}`} className="text-xs font-medium text-ink-muted">
+                {filter.label}
+              </label>
 
-          <select
-            id={`filter-${filter.name}`}
-            value={currentFilters[filter.name] || ''}
-            onChange={(event) => push({ [filter.name]: event.target.value })}
-            className="h-10 rounded-md border border-line bg-surface px-3 text-sm text-ink focus:border-brand-500 focus:outline-none"
-          >
-            <option value="">{filter.label}</option>
-            {filter.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      ))}
+              <input
+                id={`filter-${filter.name}`}
+                type="date"
+                value={currentFilters[filter.name] || ''}
+                onChange={(event) => push({ [filter.name]: event.target.value })}
+                className="h-10 rounded-md border border-line bg-surface px-2 text-sm text-ink focus:border-brand-500 focus:outline-none"
+              />
+            </div>
+          );
+        }
+
+        return (
+          <div key={filter.name}>
+            <label htmlFor={`filter-${filter.name}`} className="sr-only">
+              {filter.label}
+            </label>
+
+            <select
+              id={`filter-${filter.name}`}
+              value={currentFilters[filter.name] || ''}
+              onChange={(event) => push({ [filter.name]: event.target.value })}
+              className="h-10 rounded-md border border-line bg-surface px-3 text-sm text-ink focus:border-brand-500 focus:outline-none"
+            >
+              <option value="">{filter.label}</option>
+              {filter.options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
 
       {hasActiveFilters ? (
         <button
@@ -106,12 +132,19 @@ export function AdminToolbar({ basePath, searchPlaceholder = 'Search', currentSe
 }
 
 /** Empty state inside a table panel. */
+/**
+ * Empty state for an admin table.
+ *
+ * `icon` is a lucide icon *name*, not a component. This is a Client Component and
+ * every page that renders it is a Server Component, so a component cannot cross
+ * that boundary — it is a function, and React rejects anything that is not a
+ * plain object ("Only plain objects can be passed to Client Components from
+ * Server Components"). The name is resolved to a component here instead.
+ */
 export function TableEmpty({ icon, title, description, hasFilters = false }) {
-  const EmptyIcon = icon || null;
-
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      {EmptyIcon ? <EmptyIcon className="size-8 text-ink-subtle" aria-hidden="true" /> : null}
+      {icon ? <NavIcon name={icon} className="size-8 text-ink-subtle" /> : null}
 
       <p className="mt-4 text-sm font-semibold text-ink-soft">{title}</p>
 

@@ -43,10 +43,10 @@ export function ExperienceFallback({ label = 'Loading experience', className }) 
 
       <div className="relative flex flex-col items-center gap-5">
         <Image
-          src={BRAND.logoWhite}
+          src={BRAND.logoWhitePath}
           alt=""
-          width={140}
-          height={40}
+          width={96}
+          height={58}
           className="h-9 w-auto opacity-90"
           priority
         />
@@ -80,10 +80,10 @@ export function ExperienceUnavailable({ title, description, className }) {
       />
       <div className="relative mx-auto max-w-md px-6 text-center">
         <Image
-          src={BRAND.logoWhite}
+          src={BRAND.logoWhitePath}
           alt=""
-          width={160}
-          height={46}
+          width={96}
+          height={58}
           className="mx-auto h-10 w-auto opacity-90"
         />
         {title ? <p className="mt-6 text-lg font-semibold text-white">{title}</p> : null}

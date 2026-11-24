@@ -6,13 +6,15 @@ import { PageHeader } from '@/components/site/PageHeader';
 import { Breadcrumbs } from '@/components/site/Breadcrumbs';
 import { Detail } from '@/components/site/Section';
 import { ContactForm } from '@/components/site/ContactForm';
+import { hasCoordinates, mapEmbedUrl, mapLinkUrl } from '@/lib/map';
+import { MapPin, ExternalLink } from 'lucide-react';
 
 /**
  * Contact.
  *
- * The form posts to this app's own /api/contact route handler, which calls the
- * API server-side. That keeps the endpoint off the browser's cross-origin path
- * entirely and means the contact form works with no CORS negotiation.
+ * The form posts straight to the API at `PUBLIC_API_URL`, like every other
+ * browser-side request. The API allows this site's origin so the cookie-free
+ * contact submission works cross-origin.
  *
  * Contact details come from the database. Where an administrator has not entered
  * a phone number, the row is omitted rather than shown empty.
@@ -116,6 +118,34 @@ export default async function ContactPage() {
                     />
                   ) : null}
                 </dl>
+              </div>
+            ) : null}
+
+            {hasCoordinates(company) ? (
+              <div className="mt-8 overflow-hidden rounded-lg border border-line bg-surface-muted">
+                <iframe
+                  src={mapEmbedUrl(company)}
+                  title={`Map showing ${company.name || 'our'} location`}
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                  className="block h-64 w-full border-0"
+                  allowFullScreen
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3 text-sm">
+                  <span className="inline-flex items-center gap-1.5 text-ink-muted">
+                    <MapPin className="size-4 shrink-0 text-brand-500" aria-hidden="true" />
+                    Our office
+                  </span>
+                  <a
+                    href={mapLinkUrl(company)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 font-semibold text-brand-600 hover:underline"
+                  >
+                    Directions
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                </div>
               </div>
             ) : null}
 

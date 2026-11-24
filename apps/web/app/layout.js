@@ -1,4 +1,4 @@
-import { Sora, Inter, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 
 /**
  * Root layout.
@@ -11,28 +11,43 @@ import { Sora, Inter, JetBrains_Mono } from 'next/font/google';
  * engineered feel as the monogram, used for headings; Inter for body text, which
  * stays legible at small sizes; JetBrains Mono for figures in the dashboard,
  * where digits must line up in a column.
+ *
+ * The files are vendored in `app/fonts/` instead of being pulled from Google at
+ * build time, for two reasons:
+ *
+ *  - A build should not depend on the network. `next/font/google` fetches the
+ *    CSS and the font files on every build, so a slow, filtered or blocked
+ *    connection fails the build outright.
+ *  - In Next 16's Turbopack build, asking a variable Google font for several
+ *    weights registers the same underlying file once per weight, which trips an
+ *    internal assertion ("next/font/google queries have exactly one entry")
+ *    and fails the build. One vendored file per family gives the build one
+ *    entry per font and nothing to fetch, so every machine produces the same
+ *    result.
+ *
+ * Each file is the variable version of its family, so the whole weight range
+ * is available from a single download.
  */
 
-const sora = Sora({
-  subsets: ['latin'],
+const sora = localFont({
+  src: './fonts/Sora-Variable.woff2',
+  weight: '100 800',
   display: 'swap',
   variable: '--font-sora',
-  // Only the weights actually used. Each extra weight is a real download.
-  weight: ['600', '700', '800'],
 });
 
-const inter = Inter({
-  subsets: ['latin'],
+const inter = localFont({
+  src: './fonts/Inter-Variable.woff2',
+  weight: '100 900',
   display: 'swap',
   variable: '--font-inter',
-  weight: ['400', '500', '600'],
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
+const jetbrainsMono = localFont({
+  src: './fonts/JetBrainsMono-Variable.woff2',
+  weight: '100 800',
   display: 'swap',
   variable: '--font-mono-jb',
-  weight: ['400', '500'],
 });
 
 import './globals.css';

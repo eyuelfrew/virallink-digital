@@ -99,8 +99,8 @@ export default async function ServiceDetailPage({ params }) {
       {paragraphs.length ? (
         <Section>
           <div className="grid gap-10 lg:grid-cols-12 lg:gap-16">
-            <div className="lg:col-span-8">
-              <div className="prose-content max-w-none">
+            <div className="min-w-0 lg:col-span-8">
+              <div className="prose-content">
                 {paragraphs.map((paragraph, index) => (
                   <p key={index} className={index === 0 ? 'mt-0' : ''}>
                     {paragraph}
@@ -109,7 +109,7 @@ export default async function ServiceDetailPage({ params }) {
               </div>
             </div>
 
-            <aside className="lg:col-span-4">
+            <aside className="min-w-0 lg:col-span-4">
               <div className="rounded-lg border border-line bg-surface-muted p-6">
                 <h2 className="text-h4">Talk to us about this</h2>
                 <p className="mt-2.5 text-sm leading-relaxed text-ink-muted">

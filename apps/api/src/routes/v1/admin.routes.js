@@ -1,12 +1,22 @@
 import { Router } from 'express';
 import { models } from '../../models/index.js';
 import { idFrom, query, v } from '../../middleware/schemas.js';
+import { ADMIN_RESOURCE_PREFIXES, PERMISSIONS } from '../../shared/permissions.js';
+import { AppError } from '../../utils/AppError.js';
+import { ACTIVITY_ACTION, ENTITY } from '../../shared/enums.js';
 import { requireAuth } from '../../services/token.service.js';
 import { requirePermission } from '../../middleware/rbac.js';
+import { logCrud } from '../../middleware/audit.js';
 import * as admin from '../../services/admin.service.js';
-import { getDashboardSummary, getFinanceReport } from '../../services/dashboard.service.js';
-import { storeImages, deleteMedia } from '../../services/media.service.js';
+import * as userService from '../../services/user.service.js';
+import * as taskService from '../../services/task.service.js';
+import * as reportService from '../../services/report.service.js';
+import * as pipelineService from '../../services/pipeline.service.js';
+import * as notificationsService from '../../services/notifications.service.js';
+import { getDashboardSummary } from '../../services/dashboard.service.js';
+import { storeFiles, deleteMedia, purgeUnreferencedMedia } from '../../services/media.service.js';
 import { upload } from '../upload.js';
+import telegramAutoReplyRoutes from './telegram-auto-reply.routes.js';
 
 /**
  * Admin API.
@@ -34,12 +44,14 @@ const authenticate = requireAuth(models);
  * Two things follow: an unknown path is a genuine 404 rather than a misleading
  * "authentication required", and a path outside this list never reaches any admin
  * handler regardless of session state.
+ *
+ * The list itself lives in @virallink/shared so the website's forwarding route
+ * can enforce the identical set. It used to be duplicated there, and adding a
+ * resource meant remembering both — a resource added to the API but not to the
+ * proxy is a 404 from the browser with no server-side trace, which is a slow way
+ * to find out.
  */
-const ADMIN_PREFIXES = new Set([
-  'dashboard', 'company', 'employees', 'shareholders', 'clients', 'services',
-  'portfolio', 'blog', 'inquiries', 'finance', 'activity', 'media',
-  'testimonials', 'stats', 'jobs', 'departments', 'users',
-]);
+const ADMIN_PREFIXES = new Set(ADMIN_RESOURCE_PREFIXES);
 
 router.use((request, _response, next) => {
   const [firstSegment = ''] = request.path.split('/').filter(Boolean);
@@ -55,6 +67,40 @@ router.use((request, _response, next) => {
  * are — the /public and /contact routers are mounted separately in routes/index.js.
  */
 router.use(authenticate);
+
+/**
+ * Refuse admin work to an account whose password was set by somebody else.
+ *
+ * When an administrator issues a temporary password, the account is flagged
+ * and every admin endpoint is refused until the holder chooses one of their
+ * own. `/auth/change-password`, `/auth/me` and `/auth/logout` live in the auth
+ * router, which is mounted before this one, so they stay reachable — which is
+ * exactly the set of calls needed to finish the job and nothing else.
+ *
+ * The interface redirects the person to the change-password screen first, so
+ * this is the backstop rather than the primary mechanism. But the interface
+ * is the thing a bug is most likely to be in, and "the account was handed a
+ * password by an administrator and must set its own" is a rule that belongs on
+ * the server.
+ */
+router.use((request, _response, next) => {
+  if (request.user?.mustChangePassword) {
+    next(
+      new AppError('Choose a password of your own before using the console.', 403, {
+        code: 'PASSWORD_CHANGE_REQUIRED',
+      }),
+    );
+    return;
+  }
+
+  next();
+});
+
+/* ================================================================== */
+/* Telegram auto-reply                                                */
+/* ================================================================== */
+
+router.use('/telegram-auto-reply', telegramAutoReplyRoutes);
 
 /* ================================================================== */
 /* Dashboard                                                          */
@@ -103,7 +149,7 @@ router.post('/employees', requirePermission('employee.write'), v('upsertEmployee
   response.status(201).json({ data: employee });
 });
 
-router.put('/employees/:id', requirePermission('employee.write'), v('idParam'), v('upsertEmployee'), async (request, response) => {
+router.put('/employees/:id', requirePermission('employee.write'), v('idParam'), v('updateEmployee'), async (request, response) => {
   const employee = await admin.updateEmployee(idFrom(request), request.body, request);
   response.json({ data: employee });
 });
@@ -137,7 +183,7 @@ router.post('/shareholders', requirePermission('shareholder.write'), v('upsertSh
   response.status(201).json({ data: shareholder });
 });
 
-router.put('/shareholders/:id', requirePermission('shareholder.write'), v('idParam'), v('upsertShareholder'), async (request, response) => {
+router.put('/shareholders/:id', requirePermission('shareholder.write'), v('idParam'), v('updateShareholder'), async (request, response) => {
   const shareholder = await admin.updateShareholder(idFrom(request), request.body, request);
   response.json({ data: shareholder });
 });
@@ -166,7 +212,7 @@ router.post('/clients', requirePermission('client.write'), v('upsertClient'), as
   response.status(201).json({ data: client });
 });
 
-router.put('/clients/:id', requirePermission('client.write'), v('idParam'), v('upsertClient'), async (request, response) => {
+router.put('/clients/:id', requirePermission('client.write'), v('idParam'), v('updateClient'), async (request, response) => {
   const client = await admin.updateClient(idFrom(request), request.body, request);
   response.json({ data: client });
 });
@@ -205,7 +251,7 @@ router.post('/services', requirePermission('service.write'), v('upsertService'),
   response.status(201).json({ data: service });
 });
 
-router.put('/services/:id', requirePermission('service.write'), v('idParam'), v('upsertService'), async (request, response) => {
+router.put('/services/:id', requirePermission('service.write'), v('idParam'), v('updateService'), async (request, response) => {
   const service = await admin.updateService(idFrom(request), request.body, request);
   response.json({ data: service });
 });
@@ -239,7 +285,7 @@ router.post('/portfolio', requirePermission('project.write'), v('upsertProject')
   response.status(201).json({ data: project });
 });
 
-router.put('/portfolio/:id', requirePermission('project.write'), v('idParam'), v('upsertProject'), async (request, response) => {
+router.put('/portfolio/:id', requirePermission('project.write'), v('idParam'), v('updateProject'), async (request, response) => {
   const project = await admin.updateProject(idFrom(request), request.body, request);
   response.json({ data: project });
 });
@@ -293,7 +339,7 @@ router.post('/blog', requirePermission('blog.write'), v('upsertPost'), async (re
   response.status(201).json({ data: post });
 });
 
-router.put('/blog/:id', requirePermission('blog.write'), v('idParam'), v('upsertPost'), async (request, response) => {
+router.put('/blog/:id', requirePermission('blog.write'), v('idParam'), v('updatePost'), async (request, response) => {
   const post = await admin.updatePost(idFrom(request), request.body, request);
   response.json({ data: post });
 });
@@ -341,7 +387,7 @@ router.post('/finance/transactions', requirePermission('finance.write'), v('upse
   response.status(201).json({ data: transaction });
 });
 
-router.put('/finance/transactions/:id', requirePermission('finance.write'), v('idParam'), v('upsertTransaction'), async (request, response) => {
+router.put('/finance/transactions/:id', requirePermission('finance.write'), v('idParam'), v('updateTransaction'), async (request, response) => {
   const transaction = await admin.updateTransaction(idFrom(request), request.body, request);
   response.json({ data: transaction });
 });
@@ -376,7 +422,7 @@ router.post('/finance/invoices', requirePermission('finance.write'), v('upsertIn
   response.status(201).json({ data: invoice });
 });
 
-router.put('/finance/invoices/:id', requirePermission('finance.write'), v('idParam'), v('upsertInvoice'), async (request, response) => {
+router.put('/finance/invoices/:id', requirePermission('finance.write'), v('idParam'), v('updateInvoice'), async (request, response) => {
   const invoice = await admin.updateInvoice(idFrom(request), request.body, request);
   response.json({ data: invoice });
 });
@@ -389,11 +435,6 @@ router.post('/finance/payments', requirePermission('finance.write'), v('upsertPa
 router.delete('/finance/payments/:id', requirePermission('finance.delete'), v('idParam'), async (request, response) => {
   const result = await admin.deletePayment(idFrom(request), request);
   response.json({ data: result });
-});
-
-router.get('/finance/reports', requirePermission('finance.read'), v('financeReport'), async (request, response) => {
-  const report = await getFinanceReport(query(request));
-  response.json({ data: report });
 });
 
 /* ================================================================== */
@@ -411,6 +452,29 @@ router.get('/activity', requirePermission('activity.read'), v('listActivity'), a
   response.json({ data: result.rows, meta: result.meta });
 });
 
+/**
+ * DELETE /api/v1/activity?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * Permanently removes audit entries inside a date range. Gated on
+ * `activity.delete`, which ADMIN and SUPER_ADMIN hold.
+ *
+ * The deletion is recorded afterwards, so wiping history leaves a note that it
+ * happened and who did it. Because the entry is written for the current moment,
+ * it falls outside any past range and survives its own sweep.
+ */
+router.delete('/activity', requirePermission('activity.delete'), v('clearActivity'), async (request, response) => {
+  const { from, to } = query(request);
+  const result = await admin.clearActivity({ from, to });
+
+  await logCrud(request, {
+    action: ACTIVITY_ACTION.DELETE,
+    entity: ENTITY.ACTIVITY_LOG,
+    metadata: { from: from || null, to: to || null, deleted: result.deleted },
+  });
+
+  response.json({ data: result });
+});
+
 /* ================================================================== */
 /* Media                                                              */
 /* ================================================================== */
@@ -423,8 +487,9 @@ router.get('/media', requirePermission('media.read'), v('listMedia'), async (req
 /**
  * POST /api/v1/media
  *
- * Uploaded files are validated by multer (size, declared type) and then decoded
- * by sharp, which is the authoritative check that the file really is an image.
+ * Uploaded files are validated by multer (size, declared type) and then checked:
+ * images are decoded by sharp, which is the authoritative check that the file
+ * really is an image, and audio files are checked by their container signature.
  */
 router.post('/media', requirePermission('media.write'), upload.array('files', 10), async (request, response) => {
   const files = Array.isArray(request.files) ? request.files : [request.file].filter(Boolean);
@@ -436,7 +501,7 @@ router.post('/media', requirePermission('media.write'), upload.array('files', 10
     return;
   }
 
-  const result = await storeImages(files, {
+  const result = await storeFiles(files, {
     folder: request.body?.folder || 'general',
     uploadedById: request.user.id,
     altText: request.body?.altText || null,
@@ -455,6 +520,25 @@ router.delete('/media/:id', requirePermission('media.delete'), v('idParam'), asy
   response.json({ data: result });
 });
 
+/**
+ * POST /api/v1/media/purge-unused
+ *
+ * Delete every stored file nothing points at any more.
+ *
+ * Deleting a record now removes the images it owned, but the library still
+ * holds files whose record was deleted before that existed. This sweeps them,
+ * and is safe: anything still used by a client, service, project, blog post or
+ * Telegram rule is left alone.
+ */
+router.post(
+  '/media/purge-unused',
+  requirePermission(PERMISSIONS.MEDIA_DELETE),
+  async (_request, response) => {
+    const removed = await purgeUnreferencedMedia();
+    response.json({ data: { removed: removed.length } });
+  },
+);
+
 /* ================================================================== */
 /* Testimonials, statistics, careers, departments                     */
 /* ================================================================== */
@@ -469,7 +553,7 @@ router.post('/testimonials', requirePermission('testimonial.write'), v('upsertTe
   response.status(201).json({ data: testimonial });
 });
 
-router.put('/testimonials/:id', requirePermission('testimonial.write'), v('idParam'), v('upsertTestimonial'), async (request, response) => {
+router.put('/testimonials/:id', requirePermission('testimonial.write'), v('idParam'), v('updateTestimonial'), async (request, response) => {
   const testimonial = await admin.updateTestimonial(idFrom(request), request.body, request);
   response.json({ data: testimonial });
 });
@@ -489,7 +573,7 @@ router.post('/stats', requirePermission('company.write'), v('upsertStat'), async
   response.status(201).json({ data: stat });
 });
 
-router.put('/stats/:id', requirePermission('company.write'), v('idParam'), v('upsertStat'), async (request, response) => {
+router.put('/stats/:id', requirePermission('company.write'), v('idParam'), v('updateStat'), async (request, response) => {
   const stat = await admin.updateStat(idFrom(request), request.body, request);
   response.json({ data: stat });
 });
@@ -509,7 +593,7 @@ router.post('/jobs', requirePermission('job.write'), v('upsertJob'), async (requ
   response.status(201).json({ data: job });
 });
 
-router.put('/jobs/:id', requirePermission('job.write'), v('idParam'), v('upsertJob'), async (request, response) => {
+router.put('/jobs/:id', requirePermission('job.write'), v('idParam'), v('updateJob'), async (request, response) => {
   const job = await admin.updateJob(idFrom(request), request.body, request);
   response.json({ data: job });
 });
@@ -527,6 +611,401 @@ router.get('/departments', requirePermission('employee.read'), async (request, r
 router.post('/departments', requirePermission('employee.write'), v('upsertDepartment'), async (request, response) => {
   const department = await admin.createDepartment(request.body);
   response.status(201).json({ data: department });
+});
+
+/* ================================================================== */
+/* Publish toggle (generic)                                            */
+/* ================================================================== */
+
+/**
+ * Resources whose rows can be published, and the permission that guards each.
+ *
+ * The admin's PublishToggle is a single button shared by every publishable list
+ * page, and it has to work for whichever resource the page was configured with.
+ * Rather than repeat a near-identical route per resource, they are declared here
+ * and mounted below.
+ *
+ * Why this exists at all: the toggle sends only `{ isPublished }`, but each
+ * resource's own `PUT /:id` runs the *full* upsert validator — title, slug,
+ * content and the rest. A partial payload fails that with a 422, so publishing
+ * silently did nothing on every content type. This endpoint validates only the
+ * one field it changes.
+ *
+ * `publishedAt` is stamped alongside the flag on the way in and cleared on the
+ * way out, so the public site can order by publication date without a second
+ * pass, and unpublishing does not leave a stale date behind.
+ */
+const PUBLISHABLE = {
+  blog: { model: 'BlogPost', permission: 'blog.write', publishedField: 'status' },
+  services: { model: 'Service', permission: 'service.write' },
+  portfolio: { model: 'Project', permission: 'project.write' },
+  testimonials: { model: 'Testimonial', permission: 'testimonial.write' },
+  jobs: { model: 'Job', permission: 'job.write' },
+};
+
+for (const [resource, config] of Object.entries(PUBLISHABLE)) {
+  router.put(
+    `/${resource}/:id/publish`,
+    requirePermission(config.permission),
+    v('idParam'),
+    async (request, response) => {
+      const record = await models[config.model].findByPk(idFrom(request));
+      if (!record) throw AppError.notFound('That record no longer exists');
+
+      const shouldPublish = Boolean(request.body?.isPublished);
+
+      // A blog post is public by having a published status rather than a boolean,
+      // so the two are kept distinct rather than overloading one column.
+      if (config.publishedField === 'status') {
+        record.status = shouldPublish ? 'published' : 'draft';
+        record.publishedAt = shouldPublish ? new Date() : null;
+      } else {
+        record.isPublished = shouldPublish;
+      }
+
+      await record.save();
+
+      response.json({
+        data: { id: record.id, isPublished: shouldPublish },
+      });
+    },
+  );
+}
+
+/* ================================================================== */
+/* Users and roles                                                     */
+/* ================================================================== */
+
+router.get('/users', requirePermission('user.read'), v('listUsers'), async (request, response) => {
+  const result = await userService.listUsers(query(request));
+  response.json({ data: result.rows, meta: result.meta });
+});
+
+router.post('/users', requirePermission('user.write'), v('createUser'), async (request, response) => {
+  const user = await userService.createUser(request.body, request);
+  response.status(201).json({ data: user });
+});
+
+router.put('/users/:id', requirePermission('user.write'), v('idParam'), v('updateUser'), async (request, response) => {
+  const user = await userService.updateUser(idFrom(request), request.body, request);
+  response.json({ data: user });
+});
+
+router.delete('/users/:id', requirePermission('user.write'), v('idParam'), async (request, response) => {
+  const result = await userService.deleteUser(idFrom(request), request);
+  response.json({ data: result });
+});
+
+/**
+ * POST /api/v1/users/:id/reset-password
+ *
+ * An administrator issuing somebody a new password — the recovery path for a
+ * person who has forgotten theirs, or whose account was locked out after too
+ * many failed attempts.
+ *
+ * It is a separate endpoint rather than a field on the edit form on purpose.
+ * Editing a user's name must not be able to change their password by
+ * accident, and this action deserves its own audit entry and its own
+ * permission check.
+ *
+ * The account is forced to choose a password of its own at the next sign-in.
+ * A password handed over a phone call is a password two people know, and
+ * `mustChangePassword` is what makes handing one out acceptable.
+ */
+router.post('/users/:id/reset-password', requirePermission('user.write'), v('idParam'), v('resetUserPassword'), async (request, response) => {
+  const result = await userService.resetUserPassword(idFrom(request), request.body, request);
+  response.json({ data: result });
+});
+
+/**
+ * Create the HR profile for an account that has none, and link it. Gated on
+ * `employee.write` because the write is an employee one; the account link is the
+ * consequence, not a separate permission.
+ */
+router.post('/users/:id/employee', requirePermission('employee.write'), v('idParam'), v('createEmployeeForUser'), async (request, response) => {
+  const user = await userService.createEmployeeForUser(idFrom(request), request.body, request);
+  response.status(201).json({ data: user });
+});
+
+/**
+ * Role permissions are read-only here. The four system roles and their grants are
+ * seeded and referenced by name in code (RBAC tests, the admin nav), so editing
+ * them from the UI would let a change silently disable an endpoint nobody was
+ * looking at. Grants are changed in the seeder, where the diff is reviewable.
+ */
+router.get('/roles', requirePermission('role.read'), async (_request, response) => {
+  const roles = await userService.listRoles();
+  response.json({ data: roles });
+});
+
+/* ================================================================== */
+/* Tasks (internal)                                                     */
+/* ================================================================== */
+
+router.get('/tasks', requirePermission('task.read'), v('listTasks'), async (request, response) => {
+  const result = await taskService.listTasks(query(request));
+  response.json({ data: result.rows, meta: result.meta });
+});
+
+router.get('/tasks/summary', requirePermission('task.read'), async (_request, response) => {
+  response.json({ data: await taskService.taskSummary() });
+});
+
+/*
+ * The board, in one read.
+ *
+ * A board groups by status, so it cannot be fed a single page of a paginated
+ * list without columns silently missing rows. It returns every open task plus
+ * the most recently finished ones, and `finishedTotal` — the true number of
+ * closed tasks — so the board can say how much history it is not showing.
+ *
+ * `?finished=N` widens the finished window beyond the default ten, for when
+ * someone wants to look further back without leaving the board.
+ *
+ * Declared BEFORE `/tasks/:id` so "board" is not captured as an id.
+ */
+router.get('/tasks/board', requirePermission('task.read'), async (request, response) => {
+  response.json({ data: await taskService.boardTasks({ finishedLimit: query(request).finished }) });
+});
+
+/* ================================================================== */
+/* Notifications (push)                                                 */
+/* ================================================================== */
+
+router.post('/notifications/send', requirePermission('notification.write'), v('sendNotification'), async (request, response) => {
+  const { userId, title, body } = request.body;
+  const result = await notificationsService.sendUserNotification(userId, { title, body });
+  response.json({ data: result });
+});
+
+/*
+ * The signed-in person's own tasks — the "My tasks" view.
+ *
+ * Deliberately gated on authentication alone rather than requirePermission:
+ * it returns only data about the caller (resolved from the employee link on
+ * their session), so it is the task equivalent of /auth/me. Every seeded role
+ * holds task.read anyway, and a future read-only role should still be able to
+ * see its own work.
+ *
+ * Declared BEFORE GET /tasks/:id on purpose — otherwise "mine" is captured as
+ * an :id and rejected by the idParam validator with a 422.
+ */
+router.get('/tasks/mine', async (request, response) => {
+  response.json({ data: await taskService.myTasks(request.user) });
+});
+
+/**
+ * Team performance — who closed what, and how fast.
+ *
+ * Gated on `task.read` because it is a read of the task table: the same data
+ * the board already shows, counted and ranked. It deliberately reveals nothing
+ * that `GET /tasks` does not, so it needs no permission of its own.
+ *
+ * Declared BEFORE `/tasks/:id` on purpose, for the same reason as `/mine`:
+ * otherwise "performance" is captured as an :id and rejected by the idParam
+ * validator with a 422.
+ */
+router.get('/tasks/performance', requirePermission('task.read'), v('taskPerformance'), async (request, response) => {
+  response.json({ data: await taskService.taskPerformance(query(request)) });
+});
+
+router.get('/tasks/:id', requirePermission('task.read'), v('idParam'), async (request, response) => {
+  response.json({ data: await taskService.getTask(idFrom(request)) });
+});
+
+/**
+ * Assigning work to someone else is a separate privilege from editing it.
+ *
+ * `task.write` lets a role change the title, priority or status of a task.
+ * `task.assign` is what lets it point that task at another person. The two are
+ * granted to different roles on purpose — a copywriter may file and finish
+ * work without handing it to a colleague.
+ */
+function assertMayAssign(request, nextAssigneeId) {
+  if (nextAssigneeId === null || nextAssigneeId === undefined) return;
+  if (request.user.permissions?.includes('task.assign')) return;
+  throw AppError.forbidden('You do not have permission to assign tasks to other people');
+}
+
+router.post('/tasks', requirePermission('task.write'), v('upsertTask'), async (request, response) => {
+  assertMayAssign(request, request.body.assigneeId);
+  const task = await taskService.createTask(request.body, request);
+  response.status(201).json({ data: task });
+});
+
+router.put('/tasks/:id', requirePermission('task.write'), v('idParam'), v('updateTask'), async (request, response) => {
+  const existing = await taskService.getTask(idFrom(request));
+
+  // Only a *change* of assignee needs the extra permission. Leaving the
+  // assignee alone (a status move on your own task) stays a plain write.
+  if (request.body.assigneeId !== undefined && request.body.assigneeId !== existing.assigneeId) {
+    assertMayAssign(request, request.body.assigneeId);
+  }
+
+  const task = await taskService.updateTask(idFrom(request), request.body, request);
+  response.json({ data: task });
+});
+
+router.delete('/tasks/:id', requirePermission('task.delete'), v('idParam'), async (request, response) => {
+  response.json({ data: await taskService.deleteTask(idFrom(request), request) });
+});
+
+/* ================================================================== */
+/* Client reporting — deliverables and monthly metrics                 */
+/* ================================================================== */
+
+/*
+ * Gated on the client permissions rather than a new reporting permission set.
+ * A deliverable *is* client data: it names a client's work and how it performed.
+ * Adding report.* would only create a second way to grant access to the same
+ * information, and the two could drift apart.
+ */
+router.get('/deliverables', requirePermission('client.read'), v('listDeliverables'), async (request, response) => {
+  const result = await reportService.listDeliverables(query(request));
+  response.json({ data: result.rows, meta: result.meta });
+});
+
+/*
+ * Creation is deliberately open to either permission. The board's "New card"
+ * action posts here, and the production roles (content writers, SEO, copy) hold
+ * content.write but not client.write - requiring client.write alone made the
+ * button visible and every create request 403. Updating/deleting a deliverable
+ * still requires client.write.
+ */
+router.post('/deliverables', requirePermission('client.write', 'content.write'), v('upsertDeliverable'), async (request, response) => {
+  const deliverable = await reportService.createDeliverable(request.body, request);
+  response.status(201).json({ data: deliverable });
+});
+
+router.put('/deliverables/:id', requirePermission('client.write'), v('idParam'), v('updateDeliverable'), async (request, response) => {
+  const deliverable = await reportService.updateDeliverable(idFrom(request), request.body, request);
+  response.json({ data: deliverable });
+});
+
+router.delete('/deliverables/:id', requirePermission('client.write'), v('idParam'), async (request, response) => {
+  response.json({ data: await reportService.deleteDeliverable(idFrom(request), request) });
+});
+
+/**
+ * POST /api/v1/deliverables/metrics
+ *
+ * An upsert rather than a create. Staff correcting last month's figure should not
+ * be told the row already exists, and two people entering the same month must not
+ * create two rows that the report would then add together.
+ */
+/*
+ * Metrics take the same two permissions as the card itself. Requiring
+ * client.write alone meant a content writer could create a card and then got a
+ * 403 when they tried to enter the views for it, so the report showed
+ * "not measured" with no way for that role to fix it.
+ */
+router.post('/deliverables/metrics', requirePermission('client.write', 'content.write'), v('upsertMetric'), async (request, response) => {
+  const metric = await reportService.upsertMetric(request.body, request);
+  response.status(metric.updated ? 200 : 201).json({ data: metric });
+});
+
+router.delete('/deliverables/metrics/:id', requirePermission('client.write', 'content.write'), v('idParam'), async (request, response) => {
+  response.json({ data: await reportService.deleteMetric(idFrom(request), request) });
+});
+
+/**
+ * GET /api/v1/clients/:id/report?month=YYYY-MM&months=6
+ *
+ * One call rather than four. The headline, the trend, the platform split and the
+ * top performers all derive from the same two tables, so fetching them separately
+ * would mean four round trips and four chances for the figures to disagree.
+ */
+router.get('/clients/:id/report', requirePermission('client.read'), v('report'), async (request, response) => {
+  const report = await reportService.buildClientReport(idFrom(request), query(request));
+  response.json({ data: report });
+});
+
+router.get('/clients/:id/totals', requirePermission('client.read'), v('idParam'), async (request, response) => {
+  response.json({ data: await reportService.clientTotals(idFrom(request)) });
+});
+
+/* ================================================================== */
+/* Content production pipeline                                          */
+/* ================================================================== */
+
+/*
+ * Gated on content.* rather than client.*. Running the board is day-to-day
+ * production work; a content editor needs to move cards without also being able to
+ * edit a client's contract value. They are different powers and conflating them
+ * means either over-granting or a production team that cannot work.
+ */
+/*
+ * Client options for the board filter and the "New card" form.
+ *
+ * A content-only role can read the pipeline but not the client directory, so
+ * `/clients` would 403 and leave the board without a client picker. This exposes
+ * exactly what the board needs - id and name - and nothing else.
+ */
+router.get('/content/clients', requirePermission('content.read'), async (_request, response) => {
+  response.json({ data: await pipelineService.getClientOptions() });
+});
+
+router.get('/content/board', requirePermission('content.read'), async (request, response) => {
+  const board = await pipelineService.getBoard({
+    clientId: request.query.clientId ? Number(request.query.clientId) : undefined,
+    includePosted: request.query.includePosted === 'true',
+  });
+  response.json({ data: board });
+});
+
+router.get('/content/cycle-time', requirePermission('content.read'), async (request, response) => {
+  const cycle = await pipelineService.getCycleTime({
+    clientId: request.query.clientId ? Number(request.query.clientId) : undefined,
+  });
+  response.json({ data: cycle });
+});
+
+router.get('/content/weekly', requirePermission('content.read'), v('weeklyReport'), async (request, response) => {
+  const report = await pipelineService.getWeeklyReport(query(request));
+  response.json({ data: report });
+});
+
+router.put('/content/:id', requirePermission('content.write'), v('idParam'), v('updateContentItem'), async (request, response) => {
+  const item = await pipelineService.updateItem(idFrom(request), request.body);
+  response.json({ data: item });
+});
+
+/** Moves a card and records the move. Separate from the field update above. */
+router.post('/content/:id/stage', requirePermission('content.write'), v('idParam'), v('moveStage'), async (request, response) => {
+  const item = await pipelineService.moveStage(idFrom(request), request.body, request);
+  response.json({ data: item });
+});
+
+router.get('/content/:id/history', requirePermission('content.read'), v('idParam'), async (request, response) => {
+  response.json({ data: await pipelineService.getStageHistory(idFrom(request)) });
+});
+
+/* ---- Proposals, upstream of the pipeline ---------------------------- */
+
+router.get('/proposals', requirePermission('content.read'), async (request, response) => {
+  const proposals = await pipelineService.listProposals({
+    clientId: request.query.clientId ? Number(request.query.clientId) : undefined,
+    status: request.query.status,
+  });
+  response.json({ data: proposals });
+});
+
+router.get('/proposals/summary', requirePermission('content.read'), async (_request, response) => {
+  response.json({ data: await pipelineService.proposalSummary() });
+});
+
+router.post('/proposals', requirePermission('content.write'), v('upsertProposal'), async (request, response) => {
+  const proposal = await pipelineService.createProposal(request.body);
+  response.status(201).json({ data: proposal });
+});
+
+router.put('/proposals/:id', requirePermission('content.write'), v('idParam'), v('updateProposal'), async (request, response) => {
+  const proposal = await pipelineService.updateProposal(idFrom(request), request.body);
+  response.json({ data: proposal });
+});
+
+router.delete('/proposals/:id', requirePermission('content.write'), v('idParam'), async (request, response) => {
+  response.json({ data: await pipelineService.deleteProposal(idFrom(request)) });
 });
 
 export default router;

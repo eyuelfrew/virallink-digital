@@ -40,7 +40,7 @@ const nextConfig = {
       {
         // The admin must never be indexed. This is one of three layers; the others
         // are the noindex metadata in the admin layout and the robots.txt rule.
-        source: '/admin-teftef/:path*',
+        source: '/vira-admin/:path*',
         headers: [
           { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
           { key: 'X-Frame-Options', value: 'DENY' },
@@ -69,7 +69,13 @@ const nextConfig = {
   },
 
   async redirects() {
+    const apiBase = (process.env.NEXT_PUBLIC_API_PUBLIC_URL || 'https://api.virallinkdigital.com').replace(/\/+$/, '');
+
     return [
+      // Stored media rows use the same-origin path `/media/<key>`. Send the
+      // browser straight to the API rather than proxying the file through Next.
+      { source: '/media/:path*', destination: `${apiBase}/api/v1/media/:path*`, permanent: false },
+      { source: '/vira-admin', destination: '/vira-admin/my-tasks', permanent: false },
       // Normalise trailing slashes so each page has exactly one canonical URL.
       { source: '/services/:slug/', destination: '/services/:slug', permanent: true },
       { source: '/portfolio/:slug/', destination: '/portfolio/:slug', permanent: true },

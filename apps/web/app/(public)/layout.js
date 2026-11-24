@@ -1,6 +1,5 @@
 import { fetchCompany } from '@/lib/api';
 import { SiteHeader, SiteFooter } from '@/components/site/SiteHeader';
-import ScrollProgress from '@/components/motion/ScrollProgress';
 
 /**
  * Public layout.
@@ -27,8 +26,6 @@ export default async function PublicLayout({ children }) {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <ScrollProgress />
-
       <a href="#main" className="skip-link">
         Skip to content
       </a>

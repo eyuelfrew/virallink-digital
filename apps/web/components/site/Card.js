@@ -31,7 +31,7 @@ export function ServiceCard({ service, className }) {
         <h3 className="text-h4 group-hover:text-brand-600">{service.title}</h3>
 
         {service.summary ? (
-          <p className="mt-2.5 flex-1 text-sm leading-relaxed text-ink-muted">{service.summary}</p>
+          <p className="mt-2.5 flex-1 text-sm leading-relaxed text-ink-muted break-words">{service.summary}</p>
         ) : null}
 
         <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600">
@@ -234,7 +234,14 @@ export function StatItem({ stat, className, animate = false }) {
   );
 }
 
-/** Client logo. */
+/**
+ * Client logo.
+ *
+ * A client may be published without a logo, so the fallback is a monogram tile
+ * rather than an empty cell — the wall of clients still reads as a wall of
+ * clients. The name is written under it by the page, so a monogram is enough to
+ * identify it.
+ */
 export function ClientLogo({ client, className }) {
   const logo = client.logo;
 
@@ -259,15 +266,25 @@ export function ClientLogo({ client, className }) {
   }
 
   return (
-    <div
-      className={cn(
-        'flex h-20 items-center justify-center px-6 text-center font-sans text-base font-semibold text-ink-muted',
-        className,
-      )}
-    >
-      {client.name}
+    <div className={cn('flex h-20 items-center justify-center px-6', className)}>
+      <span className="flex size-12 items-center justify-center rounded-lg bg-surface-muted font-sans text-lg font-bold tracking-tight text-ink-muted">
+        {monogram(client.name)}
+      </span>
     </div>
   );
+}
+
+/** 'Genet Hotel' -> 'GH'. */
+function monogram(name) {
+  const words = String(name || '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) return '?';
+
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }
 
 /** Job listing. */

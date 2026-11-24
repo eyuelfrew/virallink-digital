@@ -65,12 +65,51 @@ export const PERMISSIONS = Object.freeze({
   // Audit
   ACTIVITY_READ: 'activity.read',
   ACTIVITY_READ_OWN: 'activity.read_own',
+  ACTIVITY_DELETE: 'activity.delete',
+
+  // Task management (internal ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never exposed on the public site)
+  TASK_READ: 'task.read',
+  TASK_WRITE: 'task.write',
+  TASK_DELETE: 'task.delete',
+  TASK_ASSIGN: 'task.assign',
+
+  // Content production pipeline. Separate from client.* because moving a card
+  // through approval is day-to-day production work, not client record-keeping ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+  // a content editor needs to run the board without being able to edit a
+  // client's contract value.
+  CONTENT_READ: 'content.read',
+  CONTENT_WRITE: 'content.write',
+
+  // Telegram auto-reply
+  TELEGRAM_READ: 'telegram.read',
+  TELEGRAM_WRITE: 'telegram.write',
+  TELEGRAM_MANAGE: 'telegram.manage',
+  NOTIFICATION_WRITE: 'notification.write',
 });
+
+/**
+ * First path segment of every admin resource.
+ *
+ * Shared deliberately. The API router needs it to decide which paths it owns, and
+ * the website's `/api/[...path]` forwarding route needs the identical set so it
+ * does not forward paths the API would only reject. Duplicating this list is how a
+ * newly added resource ends up answering 404 from the browser with nothing in the
+ * server logs ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â which is exactly what happened with `deliverables`.
+ *
+ * A routing concern, not an authorisation one: the API still requires a session
+ * and a per-route permission behind every one of these segments.
+ */
+export const ADMIN_RESOURCE_PREFIXES = Object.freeze([
+  'dashboard', 'company', 'employees', 'shareholders', 'clients', 'services',
+  'portfolio', 'blog', 'inquiries', 'finance', 'activity', 'media',
+  'testimonials', 'stats', 'jobs', 'departments', 'users', 'roles', 'tasks',
+  'deliverables', 'content', 'proposals', 'telegram-auto-reply', 'notifications', 'notifications',
+]);
 
 export const ALL_PERMISSIONS = Object.freeze(Object.values(PERMISSIONS));
 
 /**
- * Role → permission map. SUPER_ADMIN is not special-cased in application code;
+ * Role ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ permission map. SUPER_ADMIN is not special-cased in application code;
  * it simply holds every permission, and the seeder assigns them all explicitly
  * so the database reflects the real capability set.
  */
@@ -95,9 +134,19 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.BLOG_WRITE,
     PERMISSIONS.TESTIMONIAL_WRITE,
     PERMISSIONS.JOB_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_DELETE,
+    PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.ACTIVITY_READ,
     PERMISSIONS.ACTIVITY_READ_OWN,
+    PERMISSIONS.ACTIVITY_DELETE,
+    PERMISSIONS.TELEGRAM_READ,
+    PERMISSIONS.TELEGRAM_WRITE,
+    PERMISSIONS.TELEGRAM_MANAGE,
+    PERMISSIONS.NOTIFICATION_WRITE,
   ],
 
   [ROLES.EDITOR]: [
@@ -112,19 +161,129 @@ export const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.BLOG_WRITE,
     PERMISSIONS.TESTIMONIAL_WRITE,
     PERMISSIONS.JOB_WRITE,
+    // Editors and admins run the production board day to day.
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    // Editors get the task board but not deletion ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â removing a task is an admin action.
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.MEDIA_WRITE,
   ],
 
-  [ROLES.FINANCE]: [
+[ROLES.FINANCE]: [
     PERMISSIONS.FINANCE_READ,
     PERMISSIONS.FINANCE_WRITE,
     PERMISSIONS.FINANCE_DELETE,
     PERMISSIONS.CLIENT_READ,
     PERMISSIONS.INQUIRY_READ,
     PERMISSIONS.SHAREHOLDER_READ,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
     PERMISSIONS.MEDIA_READ,
     PERMISSIONS.ACTIVITY_READ,
+  ],
+
+  [ROLES.SOFTWARE_ENGINEER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+  ],
+
+  [ROLES.VIDEO_EDITOR]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.PROJECT_MANAGER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+    PERMISSIONS.CLIENT_READ,
+    PERMISSIONS.CLIENT_WRITE,
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.EMPLOYEE_READ,
+  ],
+
+  [ROLES.CONTENT_WRITER]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+  ],
+
+  [ROLES.SOCIAL_MEDIA_MANAGER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.GRAPHIC_DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.MOTION_DESIGNER]: [
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
+    PERMISSIONS.MEDIA_READ,
+    PERMISSIONS.MEDIA_WRITE,
+  ],
+
+  [ROLES.COPYWRITER]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+  ],
+
+  [ROLES.SEO_SPECIALIST]: [
+    PERMISSIONS.CONTENT_READ,
+    PERMISSIONS.CONTENT_WRITE,
+    PERMISSIONS.BLOG_READ,
+    PERMISSIONS.BLOG_WRITE,
+  ],
+
+  [ROLES.MARKETING_COORDINATOR]: [
+    PERMISSIONS.CLIENT_READ,
+    PERMISSIONS.CLIENT_WRITE,
+    PERMISSIONS.PROJECT_READ,
+    PERMISSIONS.PROJECT_WRITE,
+    PERMISSIONS.TASK_READ,
+    PERMISSIONS.TASK_WRITE,
+    PERMISSIONS.TASK_ASSIGN,
   ],
 });
 
@@ -133,23 +292,145 @@ export const ROLE_LABELS = Object.freeze({
   [ROLES.ADMIN]: 'Administrator',
   [ROLES.EDITOR]: 'Content editor',
   [ROLES.FINANCE]: 'Finance',
+  [ROLES.SOFTWARE_ENGINEER]: 'Software Engineer',
+  [ROLES.VIDEO_EDITOR]: 'Video Editor',
+  [ROLES.DESIGNER]: 'Designer',
+  [ROLES.PROJECT_MANAGER]: 'Project Manager',
+  [ROLES.CONTENT_WRITER]: 'Content Writer',
+  [ROLES.SOCIAL_MEDIA_MANAGER]: 'Social Media Manager',
+  [ROLES.GRAPHIC_DESIGNER]: 'Graphic Designer',
+  [ROLES.MOTION_DESIGNER]: 'Motion Designer',
+  [ROLES.COPYWRITER]: 'Copywriter',
+  [ROLES.SEO_SPECIALIST]: 'SEO Specialist',
+  [ROLES.MARKETING_COORDINATOR]: 'Marketing Coordinator',
 });
+
+/**
+ * Roles that name a job rather than a level of access.
+ *
+ * `SUPER_ADMIN` and `ADMIN` are levels of access ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â "Super admin" is not a job
+ * title, and putting it on the public team page would be wrong. The rest
+ * describe what the person actually does.
+ */
+export const JOB_ROLE_KEYS = Object.freeze([
+  ROLES.EDITOR,
+  ROLES.FINANCE,
+  ROLES.SOFTWARE_ENGINEER,
+  ROLES.VIDEO_EDITOR,
+  ROLES.DESIGNER,
+  ROLES.PROJECT_MANAGER,
+  ROLES.CONTENT_WRITER,
+  ROLES.SOCIAL_MEDIA_MANAGER,
+  ROLES.GRAPHIC_DESIGNER,
+  ROLES.MOTION_DESIGNER,
+  ROLES.COPYWRITER,
+  ROLES.SEO_SPECIALIST,
+  ROLES.MARKETING_COORDINATOR,
+]);
+
+/**
+ * The job title a role implies.
+ *
+ * An account's role already says what the person does. When that account is
+ * turned into an employee profile, asking the administrator to type the same
+ * thing into a second box is asking them to keep two records in step by hand ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+ * and the two would quietly disagree the first time one of them was edited.
+ *
+ * Returns null for a role that names a level of access rather than a job.
+ */
+export function positionForRole(roleKey) {
+  if (!roleKey || !JOB_ROLE_KEYS.includes(roleKey)) return null;
+  return ROLE_LABELS[roleKey] || null;
+}
+
+/**
+ * The job title implied by whichever of an account's roles names a job.
+ *
+ * An account can hold more than one role, and the first one is not always the
+ * one that describes the work.
+ */
+export function positionForRoles(roleKeys = []) {
+  for (const key of roleKeys) {
+    const position = positionForRole(key);
+    if (position) return position;
+  }
+  return null;
+}
+
+/**
+ * The role a job title implies, when there is an unambiguous match.
+ *
+ * The reverse of `positionForRole`, and deliberately exact: a job title is
+ * free text, so it is matched against the role's own label, ignoring case and
+ * surrounding space. A title that matches nothing returns null rather than a
+ * guess ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â "Head of Everything" is not the Marketing Coordinator role, and
+ * guessing would grant the wrong permissions.
+ */
+export function roleForPosition(position) {
+  const wanted = String(position || '').trim().toLowerCase();
+  if (!wanted) return null;
+
+  for (const key of JOB_ROLE_KEYS) {
+    if (String(ROLE_LABELS[key] || '').trim().toLowerCase() === wanted) return key;
+  }
+
+  return null;
+}
 
 /**
  * Navigation model for the admin sidebar. `permission` is used only to decide
  * whether to render the link; the API independently enforces the same check.
  */
 export const ADMIN_NAV = Object.freeze([
-  { label: 'Dashboard', href: '/admin-teftef', icon: 'LayoutDashboard', permission: null, exact: true },
+  // Points at the dashboard rather than the bare admin prefix: there is no
+  // page.js at /vira-admin, so linking there would 404, and `exact` would then
+  // never match, leaving the Dashboard item unhighlighted on every page.
+  { label: 'Dashboard', href: '/vira-admin/dashboard', icon: 'LayoutDashboard', permission: null, exact: true },
+  /*
+   * Personal work, deliberately the first thing after the dashboard rather than
+   * buried in a group: an employee signs in to see what is assigned to them,
+   * and that should be one click from anywhere. `permission: null` because it
+   * shows the caller their *own* tasks ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the API resolves the assignee from the
+   * session, so there is nothing here that a permission gate would protect.
+   */
+  { label: 'My tasks', href: '/vira-admin/my-tasks', icon: 'ListChecks', permission: null, exact: true },
+  { label: 'My Telegram', href: '/vira-admin/my-telegram', icon: 'Send', permission: null, exact: true },
+  // Internal workload, not content. Kept as its own top-level item rather than
+  // inside Content so it is never mistaken for something publishable.
+  {
+    label: 'Tasks',
+    href: '/vira-admin/tasks',
+    icon: 'ListTodo',
+    permission: PERMISSIONS.TASK_READ,
+  },
+  /*
+   * The production pipeline, as its own top-level group.
+   *
+   * This is the module the team actually works in day to day, so it sits above the
+   * publishing-oriented Content group rather than buried inside it. Putting the
+   * board, the weekly report and proposals here rather than scattered through
+   * Content is the fix for the discoverability problem: everything built for a
+   * client workflow should be reachable from one place in the sidebar.
+   */
+  {
+    label: 'Production',
+    icon: 'ListTodo',
+    permission: null,
+    children: [
+      { label: 'Pipeline board', href: '/vira-admin/content', icon: 'FolderOpen', permission: PERMISSIONS.CONTENT_READ },
+      { label: 'Weekly report', href: '/vira-admin/content/weekly', icon: 'ChartColumn', permission: PERMISSIONS.CONTENT_READ },
+      { label: 'Proposals', href: '/vira-admin/content/proposals', icon: 'Target', permission: PERMISSIONS.CONTENT_READ },
+    ],
+  },
   {
     label: 'Content',
     icon: 'FileStack',
     permission: null,
     children: [
-      { label: 'Services', href: '/admin-teftef/services', icon: 'Briefcase', permission: PERMISSIONS.SERVICE_READ },
-      { label: 'Portfolio', href: '/admin-teftef/portfolio', icon: 'FolderKanban', permission: PERMISSIONS.PROJECT_READ },
-      { label: 'Blog', href: '/admin-teftef/blog', icon: 'Newspaper', permission: PERMISSIONS.BLOG_READ },
-      { label: 'Inquiries', href: '/admin-teftef/inquiries', icon: 'Inbox', permission: PERMISSIONS.INQUIRY_READ },
+      { label: 'Services', href: '/vira-admin/services', icon: 'Briefcase', permission: PERMISSIONS.SERVICE_READ },
+      { label: 'Portfolio', href: '/vira-admin/portfolio', icon: 'FolderKanban', permission: PERMISSIONS.PROJECT_READ },
+      { label: 'Blog', href: '/vira-admin/blog', icon: 'Newspaper', permission: PERMISSIONS.BLOG_READ },
+      { label: 'Inquiries', href: '/vira-admin/inquiries', icon: 'Inbox', permission: PERMISSIONS.INQUIRY_READ },
     ],
   },
   {
@@ -157,19 +438,18 @@ export const ADMIN_NAV = Object.freeze([
     icon: 'Users',
     permission: null,
     children: [
-      { label: 'Employees', href: '/admin-teftef/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
-      { label: 'Clients', href: '/admin-teftef/clients', icon: 'Building2', permission: PERMISSIONS.CLIENT_READ },
-      { label: 'Shareholders', href: '/admin-teftef/shareholders', icon: 'PieChart', permission: PERMISSIONS.SHAREHOLDER_READ },
+      { label: 'Employees', href: '/vira-admin/employees', icon: 'UserRound', permission: PERMISSIONS.EMPLOYEE_READ },
+      { label: 'Clients', href: '/vira-admin/clients', icon: 'Building2', permission: PERMISSIONS.CLIENT_READ },
+      { label: 'Shareholders', href: '/vira-admin/shareholders', icon: 'PieChart', permission: PERMISSIONS.SHAREHOLDER_READ },
     ],
   },
-  {
+{
     label: 'Finance',
     icon: 'Wallet',
     permission: PERMISSIONS.FINANCE_READ,
     children: [
-      { label: 'Transactions', href: '/admin-teftef/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Invoices', href: '/admin-teftef/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
-      { label: 'Reports', href: '/admin-teftef/finance/reports', icon: 'ChartColumn', permission: PERMISSIONS.FINANCE_READ },
+      { label: 'Transactions', href: '/vira-admin/finance/transactions', icon: 'ArrowLeftRight', permission: PERMISSIONS.FINANCE_READ },
+      { label: 'Invoices', href: '/vira-admin/finance/invoices', icon: 'ReceiptText', permission: PERMISSIONS.FINANCE_READ },
     ],
   },
   {
@@ -177,10 +457,11 @@ export const ADMIN_NAV = Object.freeze([
     icon: 'Settings',
     permission: PERMISSIONS.SETTINGS_READ,
     children: [
-      { label: 'Company', href: '/admin-teftef/settings/company', icon: 'Building', permission: PERMISSIONS.COMPANY_READ },
-      { label: 'Media', href: '/admin-teftef/settings/media', icon: 'Image', permission: PERMISSIONS.MEDIA_READ },
-      { label: 'Users & roles', href: '/admin-teftef/settings/users', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
-      { label: 'Activity log', href: '/admin-teftef/activity', icon: 'History', permission: PERMISSIONS.ACTIVITY_READ },
+      { label: 'Company', href: '/vira-admin/settings/company', icon: 'Building', permission: PERMISSIONS.COMPANY_READ },
+      { label: 'Media', href: '/vira-admin/settings/media', icon: 'Image', permission: PERMISSIONS.MEDIA_READ },
+      { label: 'Users & roles', href: '/vira-admin/settings/users', icon: 'ShieldCheck', permission: PERMISSIONS.USER_READ },
+      { label: 'Activity log', href: '/vira-admin/activity', icon: 'History', permission: PERMISSIONS.ACTIVITY_READ },
+      { label: 'Telegram auto-reply', href: '/vira-admin/telegram', icon: 'Send', permission: PERMISSIONS.TELEGRAM_READ },
     ],
   },
 ]);
