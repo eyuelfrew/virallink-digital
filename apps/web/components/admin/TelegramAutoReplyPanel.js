@@ -38,6 +38,15 @@ const TRIGGER_LABELS = {
   regex: 'Regular expression',
 };
 
+const TRIGGER_HINTS = {
+  any: 'Every message answers, subject to cooldowns.',
+  new_chat: 'Only the first message in a chat.',
+  returning_chat: 'Only messages after the first one.',
+  keyword: 'Matches if the keyword appears anywhere in the message — "spc" also matches "i need spc".',
+  exact: 'Strict: the whole message must equal the phrase, ignoring case and surrounding spaces. "spc" will not match "i need spc".',
+  regex: 'Advanced pattern matching against the whole message.',
+};
+
 function accountLabel(account) {
   const username = account.botUsername || account.accountUsername;
   return `${account.name}${username ? ` (@${username})` : ''}`;
@@ -63,7 +72,7 @@ function accountStatusTone(account) {
 function defaultRuleForm() {
   return {
     name: '',
-    trigger: 'keyword',
+    trigger: 'exact',
     keywords: '',
     replyText: '',
     sendCatalog: false,
@@ -1310,6 +1319,7 @@ export function TelegramAutoReplyPanel({
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-ink-subtle">{TRIGGER_HINTS[ruleForm.trigger]}</p>
                 </label>
               </div>
 
@@ -1325,7 +1335,9 @@ export function TelegramAutoReplyPanel({
                     placeholder={
                       ruleForm.trigger === 'regex'
                         ? 'e.g. ^(price|cost)\\b'
-                        : 'Separate keywords with commas or new lines'
+                        : ruleForm.trigger === 'exact'
+                          ? 'e.g. spc — the whole message must match this'
+                          : 'Separate keywords with commas or new lines'
                     }
                     className="rounded-md border border-line p-3 text-sm"
                   />

@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required for all API calls. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Auto-reply rules can attach photos taken with the camera. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
 
     <application
         android:label="Virallink"

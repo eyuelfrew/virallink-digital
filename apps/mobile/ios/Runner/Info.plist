@@ -40,7 +40,9 @@
 		</dict>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Choose photos to send as chat messages.</string>
+	<string>Choose photos to send as chat messages and auto-reply images.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to attach to an auto-reply rule.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

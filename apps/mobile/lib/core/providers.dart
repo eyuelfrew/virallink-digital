@@ -4,6 +4,7 @@ import '../features/auth/data/auth_repository.dart';
 import '../features/auth/domain/app_user.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/telegram/data/telegram_account_repository.dart';
+import '../features/telegram/data/telegram_auto_reply_repository.dart';
 import 'network/api_client.dart';
 import 'notifications/fcm_push_notification_service.dart';
 import 'notifications/push_notification_service.dart';
@@ -38,6 +39,12 @@ final telegramAccountRepositoryProvider = Provider<TelegramAccountRepository>((
   ref,
 ) {
   return TelegramAccountRepository(ref.watch(apiClientProvider));
+});
+
+/// Auto-reply management for the signed-in person's own connections.
+final telegramAutoReplyRepositoryProvider =
+    Provider<TelegramAutoReplyRepository>((ref) {
+  return TelegramAutoReplyRepository(ref.watch(apiClientProvider));
 });
 
 final authControllerProvider = NotifierProvider<AuthController, AuthState>(

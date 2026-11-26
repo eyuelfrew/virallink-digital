@@ -869,6 +869,12 @@ Shared rules:
   with 2 fraction digits; null/unparseable price → "Price on request".
 - `catalogCaption()` builds `<b>name</b>` + escaped description (≤700 chars) +
   bold price; the MTProto variant uses the same without HTML.
+- For a **personal account**, a rule's `replyText` is passed as the caption when
+  the rule has images (`captionOnAlbum: true` in `runMatchedRules`), so "hi" or
+  a keyword answers with one image carrying the description instead of an image
+  followed by a separate text message. If no image can be delivered, the helper
+  falls back to plain text, so the reply is never lost. Bot connections keep the
+  older image-then-text behaviour for now.
 - Per-item pacing: 80 ms (bot) / 120 ms (MTProto) to stay under Telegram flood
   limits. All outbound calls are wrapped in `try/catch` that logs and falls back;
   `callApi` has a 15 s `AbortSignal.timeout` (10 s for the env bot transport).

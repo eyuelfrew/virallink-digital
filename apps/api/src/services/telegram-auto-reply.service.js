@@ -2028,20 +2028,31 @@ export async function getAnalytics(accountId, { days = 30 } = {}) {
  * Send the action list produced by a matched rule.
  *
  * The send functions are injected so the same rule engine works for a bot token
- * and for an MTProto client without branching inside it.
+ * and for an MTProto client without branching inside it. `captionOnAlbum` is
+ * enabled only for personal accounts: their rule reply text is attached to the
+ * image as a caption instead of arriving as a separate message. Bot behaviour
+ * stays unchanged until we deliberately work on it.
  */
-async function runMatchedRules(rules, { sendText, sendCatalog, sendAlbum, sendAudio, sendMenu, catalogIntro = '' }) {
+async function runMatchedRules(
+  rules,
+  { sendText, sendCatalog, sendAlbum, sendAudio, sendMenu, catalogIntro = '', captionOnAlbum = false },
+) {
   let sent = 0;
   let lastRule = null;
 
   for (const rule of rules) {
-    if (rule.replyText) {
-      if (await sendText(rule.replyText)) sent += 1;
+    const albumIds = normalizeMediaIds(rule.imageMediaIds);
+    const captionOnImage = captionOnAlbum && albumIds.length > 0 && Boolean(sendAlbum);
+
+    if (albumIds.length && sendAlbum) {
+      sent += await sendAlbum(albumIds, captionOnImage ? rule.replyText || '' : '');
     }
 
-    const albumIds = normalizeMediaIds(rule.imageMediaIds);
-    if (albumIds.length && sendAlbum) {
-      sent += await sendAlbum(albumIds, '');
+    // With images on a personal account the reply text is the image caption;
+    // sending it here too would duplicate it. sendAlbum falls back to plain
+    // text itself when no image can be delivered.
+    if (rule.replyText && !captionOnImage) {
+      if (await sendText(rule.replyText)) sent += 1;
     }
 
     // The voice note or sound bite, after the text and the album.
@@ -2732,6 +2743,9 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
       sendAudio: (mediaId) => sendAccountAudio(client, chat.id, mediaId),
       sendMenu: () => sendAccountTextMenu(client, chat.id, account.id, settings, { path: [] }),
       catalogIntro: settings.catalogIntro,
+      // Personal accounts: attach the rule's reply text to its images as a
+      // caption instead of sending it as a second message.
+      captionOnAlbum: true,
     });
 
     logger.info(

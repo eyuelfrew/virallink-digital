@@ -13,6 +13,7 @@ import '../../chat/presentation/chat_list_screen.dart';
 import '../../auth/presentation/change_password_screen.dart';
 import '../../auth/presentation/change_handles_screen.dart';
 import '../../telegram/presentation/telegram_account_screen.dart';
+import '../../telegram/presentation/telegram_auto_reply_screen.dart';
 import '../../notifications/presentation/notifications_inbox_screen.dart';
 import '../../clients/presentation/clients_screen.dart';
 import '../../inquiries/presentation/inquiries_screen.dart';
@@ -185,6 +186,13 @@ class MoreScreen extends ConsumerWidget {
                       label: 'My Telegram',
                       description: 'Link your own Telegram account for auto-reply',
                       onTap: () => _push(context, const TelegramAccountScreen()),
+                    ),
+                    _MenuTile(
+                      icon: Icons.smart_toy_outlined,
+                      label: 'Auto-reply',
+                      description: 'Settings, rules, images, audio and catalog',
+                      onTap: () =>
+                          _push(context, const TelegramAutoReplyScreen()),
                     ),
                     _MenuTile(
                       icon: Icons.alternate_email,
