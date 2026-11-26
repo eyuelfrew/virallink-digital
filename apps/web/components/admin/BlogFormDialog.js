@@ -13,6 +13,11 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
   const [fieldErrors, setFieldErrors] = useState({});
   const [categories, setCategories] = useState([]);
   const [tags, setTags] = useState([]);
+  const [newCategory, setNewCategory] = useState('');
+  const [newTag, setNewTag] = useState('');
+  const [addedIds, setAddedIds] = useState({ categories: [], tags: [] });
+  const [taxonomyError, setTaxonomyError] = useState(null);
+  const [taxonomyPending, setTaxonomyPending] = useState(false);
 
   const isEdit = Boolean(post?.id);
 
@@ -20,6 +25,10 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
     if (!open) {
       setError(null);
       setFieldErrors({});
+      setTaxonomyError(null);
+      setNewCategory('');
+      setNewTag('');
+      setAddedIds({ categories: [], tags: [] });
       return;
     }
 
@@ -31,6 +40,57 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
       setTags(tgs);
     });
   }, [open]);
+
+  /**
+   * Taxonomy is created through the same API the admin uses everywhere else.
+   * The new row is selected immediately, so adding a category or tag while
+   * writing an article does not mean closing and reopening the dialog.
+   */
+  async function addTaxonomy(kind, value) {
+    const name = String(value || '').trim();
+    if (!name || taxonomyPending) return;
+
+    const isCategory = kind === 'category';
+    const label = isCategory ? 'category' : 'tag';
+    const existing = (isCategory ? categories : tags).find(
+      (item) => String(item.name || '').toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      const key = isCategory ? 'categories' : 'tags';
+      setAddedIds((current) => ({ ...current, [key]: [...current[key], existing.id] }));
+      if (isCategory) setNewCategory('');
+      else setNewTag('');
+      return;
+    }
+
+    setTaxonomyPending(true);
+    setTaxonomyError(null);
+    try {
+      const response = await fetch(browserApiUrl(`/api/blog/${isCategory ? 'categories' : 'tags'}`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error?.message || `Could not add that ${label}.`);
+
+      const created = data.data;
+      const key = isCategory ? 'categories' : 'tags';
+      if (isCategory) {
+        setCategories((current) => [...current, created]);
+        setNewCategory('');
+      } else {
+        setTags((current) => [...current, created]);
+        setNewTag('');
+      }
+      setAddedIds((current) => ({ ...current, [key]: [...current[key], created.id] }));
+    } catch (error) {
+      setTaxonomyError(error?.message || `Could not add that ${label}.`);
+    } finally {
+      setTaxonomyPending(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -155,6 +215,10 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
                   <Field name="publishedAt" label="Publish date" type="date" defaultValue={post?.publishedAt ? String(post.publishedAt).slice(0, 10) : ''} />
                 </div>
 
+                {taxonomyError ? (
+                  <p role="alert" className="text-sm text-danger">{taxonomyError}</p>
+                ) : null}
+
                 <div className="grid gap-5 sm:grid-cols-2">
                   <fieldset className="rounded-md border border-line p-4">
                     <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-ink-soft">Categories</legend>
@@ -166,15 +230,43 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
                               type="checkbox"
                               name="categoryIds"
                               value={cat.id}
-                              defaultChecked={post?.categories?.some((c) => c.id === cat.id) || false}
+                              defaultChecked={Boolean(
+                                post?.categories?.some((c) => c.id === cat.id) ||
+                                  addedIds.categories.includes(cat.id),
+                              )}
                               className="size-4 rounded border-line-strong text-brand-500 focus:ring-brand-500"
                             />
                             <span className="text-sm text-ink-soft">{cat.name}</span>
                           </label>
                         ))
                       ) : (
-                        <p className="text-xs text-ink-subtle">No categories yet. Add one below.</p>
+                        <p className="text-xs text-ink-subtle">No categories yet.</p>
                       )}
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={newCategory}
+                        onChange={(event) => setNewCategory(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            addTaxonomy('category', newCategory);
+                          }
+                        }}
+                        placeholder="New category"
+                        aria-label="New category name"
+                        maxLength={120}
+                        className="h-9 min-w-0 flex-1 rounded-md border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-subtle focus:border-brand-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={taxonomyPending || !newCategory.trim()}
+                        onClick={() => addTaxonomy('category', newCategory)}
+                        className="h-9 shrink-0 rounded-md border border-line px-3 text-sm font-semibold text-ink-soft hover:bg-surface-muted disabled:opacity-60"
+                      >
+                        Add
+                      </button>
                     </div>
                   </fieldset>
 
@@ -188,7 +280,10 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
                               type="checkbox"
                               name="tagIds"
                               value={tag.id}
-                              defaultChecked={post?.tags?.some((t) => t.id === tag.id) || false}
+                              defaultChecked={Boolean(
+                                post?.tags?.some((t) => t.id === tag.id) ||
+                                  addedIds.tags.includes(tag.id),
+                              )}
                               className="size-4 rounded border-line-strong text-brand-500 focus:ring-brand-500"
                             />
                             <span className="text-sm text-ink-soft">{tag.name}</span>
@@ -197,6 +292,31 @@ export function BlogFormDialog({ post = null, triggerLabel = 'Add article' }) {
                       ) : (
                         <p className="text-xs text-ink-subtle">No tags yet.</p>
                       )}
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={newTag}
+                        onChange={(event) => setNewTag(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            addTaxonomy('tag', newTag);
+                          }
+                        }}
+                        placeholder="New tag"
+                        aria-label="New tag name"
+                        maxLength={120}
+                        className="h-9 min-w-0 flex-1 rounded-md border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-subtle focus:border-brand-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={taxonomyPending || !newTag.trim()}
+                        onClick={() => addTaxonomy('tag', newTag)}
+                        className="h-9 shrink-0 rounded-md border border-line px-3 text-sm font-semibold text-ink-soft hover:bg-surface-muted disabled:opacity-60"
+                      >
+                        Add
+                      </button>
                     </div>
                   </fieldset>
                 </div>

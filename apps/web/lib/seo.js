@@ -1,4 +1,4 @@
-import { absoluteUrl } from '@/lib/utils';
+import { absoluteUrl, withQuery } from '@/lib/utils';
 import { SITE_URL, BRAND } from '@/lib/config';
 import { titleTemplate, truncateDescription, canonicalUrl } from '@virallink/shared/seo';
 
@@ -35,19 +35,26 @@ export function buildMetadata({
   const resolvedTitle = titleTemplate(title, { titleSuffix: BRAND.name });
   const resolvedDescription = truncateDescription(description || '', 158);
 
-  const ogImage = image
-    ? { url: absoluteUrl(image, SITE_URL), width: 1200, height: 630, alt: title || BRAND.name }
-    : {
-        // Points at the generated route, not a file. This used to reference
-        // /og-default.png, which was never committed — so every page without its
-        // own image advertised a 404 as its social card, and Facebook, LinkedIn and
-        // X showed nothing at all. The route renders a PNG on demand from the brand
-        // tokens, so it cannot go stale after a rebrand either.
-        url: absoluteUrl('/og-image', SITE_URL),
-        width: 1200,
-        height: 630,
-        alt: `${BRAND.name} — digital marketing agency`,
-      };
+  /*
+   * Every page gets a generated PNG card, not a raw media URL. The route takes
+   * the title, description and optional /media/<key> cover as query parameters,
+   * so a shared article shows its own headline and image on Facebook, LinkedIn
+   * and X. With no cover it renders the brand fallback. This used to reference
+   * /og-default.png, which was never committed, so the card was a 404.
+   */
+  const ogImage = {
+    url: absoluteUrl(
+      withQuery('/og-image', {
+        title: resolvedTitle,
+        description: resolvedDescription,
+        image: image || undefined,
+      }),
+      SITE_URL,
+    ),
+    width: 1200,
+    height: 630,
+    alt: resolvedTitle || `${BRAND.name} — digital marketing agency`,
+  };
 
   return {
     title: resolvedTitle,

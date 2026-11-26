@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og';
-import { BRAND } from '@/lib/config';
+import { BRAND, PUBLIC_API_URL } from '@/lib/config';
 
 /**
  * Open Graph / Twitter card.
@@ -24,7 +24,57 @@ export const alt = `${BRAND.name} — digital marketing, web and content`;
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
-export async function GET() {
+const MAX_TITLE = 120;
+const MAX_DESCRIPTION = 180;
+
+/**
+ * Media URLs arrive from the API as site-relative `/media/<key>` paths. Turn
+ * those into an absolute URL on the API's public origin so Satori can fetch the
+ * bytes. Nothing else is accepted — this route must not become a proxy that
+ * fetches arbitrary caller-supplied hosts.
+ */
+function allowedImageUrl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+
+  const apiBase = String(PUBLIC_API_URL || '').replace(/\/+$/, '');
+  if (value.startsWith('/media/')) return `${apiBase}/api/v1/${value.slice(1)}`;
+
+  const allowed = `${apiBase}/api/v1/media/`;
+  return value.startsWith(allowed) ? value : null;
+}
+
+/**
+ * Fetch the cover once, with a deadline and a size cap, and hand Satori a data
+ * URL. A missing or slow media file must degrade to the brand card, not leave a
+ * social crawler waiting on an unbounded fetch.
+ */
+async function socialImageSrc(raw) {
+  const url = allowedImageUrl(raw);
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return null;
+
+    const bytes = await response.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 8 * 1024 * 1024) return null;
+
+    const mime = (response.headers.get('content-type') || 'image/jpeg').split(';')[0];
+    return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request) {
+  const params = request.nextUrl.searchParams;
+  const title = String(params.get('title') || '').trim().slice(0, MAX_TITLE) ||
+    `${BRAND.name} — digital marketing, web and content`;
+  const description = String(params.get('description') || '').trim().slice(0, MAX_DESCRIPTION) ||
+    'Strategy · Content · Growth';
+  const imageSrc = await socialImageSrc(params.get('image'));
+
   return new ImageResponse(
     (
       <div
@@ -32,50 +82,73 @@ export async function GET() {
           width: '100%',
           height: '100%',
           display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
           // Brand tokens from lib/config rather than a designer-maintained file,
           // so the card can never go stale after a rebrand.
           backgroundColor: '#010f1d',
-          padding: '72px 80px',
+          overflow: 'hidden',
         }}
       >
-        {/* Accent rule across the top, matching the site's header. */}
-        <div style={{ display: 'flex', width: '100%', height: 8, backgroundColor: '#025298' }} />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            width: imageSrc ? '62%' : '100%',
+            height: '100%',
+            padding: '72px 80px',
+          }}
+        >
+          {/* Accent rule across the top, matching the site's header. */}
+          <div style={{ display: 'flex', width: '100%', height: 8, backgroundColor: '#025298' }} />
 
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div
-            style={{
-              display: 'flex',
-              fontSize: 88,
-              fontWeight: 800,
-              color: '#ffffff',
-              letterSpacing: '-3px',
-              lineHeight: 1.05,
-            }}
-          >
-            {BRAND.name}
+          <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div
+              style={{
+                display: 'flex',
+                fontSize: title.length > 60 ? 56 : 72,
+                fontWeight: 800,
+                color: '#ffffff',
+                letterSpacing: '-2px',
+                lineHeight: 1.1,
+                overflow: 'hidden',
+              }}
+            >
+              {title}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                marginTop: 24,
+                fontSize: 28,
+                fontWeight: 500,
+                color: '#9fb4cc',
+                lineHeight: 1.3,
+                overflow: 'hidden',
+              }}
+            >
+              {description}
+            </div>
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              marginTop: 20,
-              fontSize: 36,
-              fontWeight: 500,
-              color: '#9fb4cc',
-            }}
-          >
-            Digital marketing, web and content
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            <div style={{ display: 'flex', width: 100, height: 6, backgroundColor: '#f9a71b' }} />
+            <div style={{ display: 'flex', fontSize: 24, color: '#6d8299' }}>
+              virallinkdigital.com
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ display: 'flex', width: 120, height: 6, backgroundColor: '#f9a71b' }} />
-          <div style={{ display: 'flex', fontSize: 26, color: '#6d8299' }}>
-            Strategy · Content · Growth
+        {imageSrc ? (
+          <div style={{ display: 'flex', width: '38%', height: '100%', backgroundColor: '#0a2036' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageSrc}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           </div>
-        </div>
+        ) : null}
       </div>
     ),
     {
