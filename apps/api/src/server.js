@@ -143,7 +143,6 @@ async function start() {
    * cPanel app log. Placed before the database check so it still prints when
    * the DB is unreachable: CORS is configuration, not connectivity.
    */
-  
   logger.info(
     {
       siteUrl: env.SITE_URL,

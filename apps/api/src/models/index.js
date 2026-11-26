@@ -81,6 +81,7 @@ const {
   TelegramAutoReplyRule,
   TelegramCatalogItem,
   TelegramAutoReplyChatState,
+  TelegramAutoReplyMetric,
   TelegramMenuButton,
   Company,
   SocialLink,

@@ -17,6 +17,7 @@ const {
   TelegramAutoReplyRule,
   TelegramCatalogItem,
   TelegramAutoReplyChatState,
+  TelegramAutoReplyMetric,
   TelegramMenuButton,
 } = models;
 
@@ -1878,6 +1879,152 @@ async function recordChatState(account, chat, messageId, now) {
 }
 
 /**
+ * Aggregate analytics. Counts only — no chat id, sender, username or message
+ * text. Each incoming message contributes one `incoming` event and one outcome
+ * event, so the admin can see how much the auto-reply did and where it stayed
+ * quiet without any transcript being stored.
+ */
+export const ANALYTICS_CATEGORIES = Object.freeze({
+  INCOMING: 'incoming',
+  RULE: 'rule',
+  MENU: 'menu',
+  WELCOME: 'welcome',
+  CATALOG: 'catalog',
+  AWAY: 'away',
+  SILENCE: 'silence',
+  BLOCKED: 'blocked',
+  DISABLED: 'disabled',
+  INTERVAL: 'interval',
+  NEW_CHATS_OFF: 'new_chats_off',
+  RETURNING_CHATS_OFF: 'returning_chats_off',
+});
+
+const REPLY_CATEGORIES = new Set([
+  ANALYTICS_CATEGORIES.RULE,
+  ANALYTICS_CATEGORIES.MENU,
+  ANALYTICS_CATEGORIES.WELCOME,
+  ANALYTICS_CATEGORIES.CATALOG,
+  ANALYTICS_CATEGORIES.AWAY,
+]);
+
+function analyticsDay(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * Increment today's aggregate row. Best effort: a metrics failure must never
+ * stop a reply from being sent, so errors are logged and swallowed.
+ */
+export async function recordAnalytics(accountId, category, { ruleId = null, sent = 0, now = new Date() } = {}) {
+  const bucketDate = analyticsDay(now);
+  const normalizedRuleId = Number(ruleId) > 0 ? Number(ruleId) : 0;
+  const values = {
+    eventCount: 1,
+    sentCount: Math.max(0, Number(sent) || 0),
+  };
+
+  try {
+    const [row, created] = await TelegramAutoReplyMetric.findOrCreate({
+      where: { accountId, bucketDate, category, ruleId: normalizedRuleId },
+      defaults: values,
+    });
+    if (!created) await row.increment(values);
+  } catch (error) {
+    if (error?.name === 'SequelizeUniqueConstraintError') {
+      // Two Passenger workers can race the upsert. Retry the increment once.
+      try {
+        const row = await TelegramAutoReplyMetric.findOne({
+          where: { accountId, bucketDate, category, ruleId: normalizedRuleId },
+        });
+        if (row) await row.increment(values);
+        return;
+      } catch {
+        // Fall through to the warning below.
+      }
+    }
+    logger.warn({ accountId, category, err: error?.message }, 'telegram analytics skipped');
+  }
+}
+
+/**
+ * Read aggregate analytics for one account. Returns totals, a daily series and
+ * the most-used rules. Rule names are joined from the rule table, never from a
+ * message — no free text ever enters this response.
+ */
+export async function getAnalytics(accountId, { days = 30 } = {}) {
+  const windowDays = Math.min(Math.max(Number(days) || 30, 1), 365);
+  const today = analyticsDay(new Date());
+  const from = new Date(Date.now() - (windowDays - 1) * 86400000).toISOString().slice(0, 10);
+
+  const rows = await TelegramAutoReplyMetric.findAll({
+    where: { accountId, bucketDate: { [Op.gte]: from } },
+    order: [
+      ['bucketDate', 'ASC'],
+      ['category', 'ASC'],
+      ['ruleId', 'ASC'],
+    ],
+    raw: true,
+  });
+
+  const totals = { messages: 0, replies: 0, silent: 0, ruleReplies: 0 };
+  const daily = new Map();
+  const ruleTotals = new Map();
+
+  for (const row of rows) {
+    const date = String(row.bucketDate).slice(0, 10);
+    const events = Number(row.eventCount) || 0;
+    const sent = Number(row.sentCount) || 0;
+    const category = row.category;
+
+    if (!daily.has(date)) daily.set(date, { date, messages: 0, replies: 0, silent: 0 });
+    const bucket = daily.get(date);
+
+    if (category === ANALYTICS_CATEGORIES.INCOMING) {
+      totals.messages += events;
+      bucket.messages += events;
+    } else {
+      totals.replies += sent;
+      bucket.replies += sent;
+      if (sent === 0) {
+        totals.silent += events;
+        bucket.silent += events;
+      }
+      if (category === ANALYTICS_CATEGORIES.RULE) totals.ruleReplies += events;
+    }
+
+    const ruleId = Number(row.ruleId) || 0;
+    if (ruleId > 0 && REPLY_CATEGORIES.has(category)) {
+      if (!ruleTotals.has(ruleId)) ruleTotals.set(ruleId, { ruleId, events: 0, replies: 0 });
+      const entry = ruleTotals.get(ruleId);
+      entry.events += events;
+      entry.replies += sent;
+    }
+  }
+
+  const ruleIds = [...ruleTotals.keys()];
+  const rules = ruleIds.length
+    ? await TelegramAutoReplyRule.findAll({
+        where: { id: ruleIds },
+        attributes: ['id', 'name'],
+        raw: true,
+      })
+    : [];
+  const names = new Map(rules.map((rule) => [Number(rule.id), rule.name]));
+
+  const topRules = [...ruleTotals.values()]
+    .map((entry) => ({ ...entry, name: names.get(entry.ruleId) || `Rule ${entry.ruleId}` }))
+    .sort((a, b) => b.events - a.events || a.ruleId - b.ruleId)
+    .slice(0, 10);
+
+  return {
+    window: { days: windowDays, from, to: today },
+    totals,
+    daily: [...daily.values()],
+    topRules,
+  };
+}
+
+/**
  * Send the action list produced by a matched rule.
  *
  * The send functions are injected so the same rule engine works for a bot token
@@ -1946,11 +2093,13 @@ export async function handleAutoReplyUpdate(update, account) {
 
   const settings = await ensureSettings(account.id);
   if (!settings.isEnabled) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.DISABLED);
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (bot) skipped: auto-reply disabled');
     return;
   }
 
   const now = new Date();
+  await recordAnalytics(account.id, ANALYTICS_CATEGORIES.INCOMING, { now });
   const messageId = Number(message.message_id);
   logger.info(
     {
@@ -1971,6 +2120,7 @@ export async function handleAutoReplyUpdate(update, account) {
   const { state, isNew } = recorded;
 
   if (state.isBlocked || state.autoReplyEnabled === false) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.BLOCKED, { now });
     logger.info(
       { accountId: account.id, chatId: chat.id, isBlocked: state.isBlocked, autoReplyEnabled: state.autoReplyEnabled },
       'telegram auto-reply (bot) skipped: chat blocked or auto-reply off',
@@ -1978,10 +2128,12 @@ export async function handleAutoReplyUpdate(update, account) {
     return;
   }
   if (isNew && !settings.replyToNewChats) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.NEW_CHATS_OFF, { now });
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (bot) skipped: new chats disabled');
     return;
   }
   if (!isNew && !settings.replyToReturningChats) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.RETURNING_CHATS_OFF, { now });
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (bot) skipped: returning chats disabled');
     return;
   }
@@ -1991,6 +2143,7 @@ export async function handleAutoReplyUpdate(update, account) {
     state.lastReplyAt &&
     now.getTime() - new Date(state.lastReplyAt).getTime() < MIN_REPLY_INTERVAL_MS
   ) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.INTERVAL, { now });
     logger.info(
       { accountId: account.id, chatId: chat.id },
       'telegram auto-reply (bot) skipped: reply interval not elapsed',
@@ -2002,15 +2155,19 @@ export async function handleAutoReplyUpdate(update, account) {
   let sent = 0;
   let awaySent = false;
   let silenceReason = null;
+  let outcome = ANALYTICS_CATEGORIES.SILENCE;
 
   if (isMenuCommand) {
+    let menuSent = false;
     if (await sendBotMenu(token, chat.id, account.id, settings)) {
+      menuSent = true;
       await state.update({ lastReplyAt: now });
       logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (bot) menu command handled');
     } else {
       await sendText(token, chat.id, 'No chat menu is configured for this account yet.');
       logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (bot) menu command could not be shown (no buttons or send failed)');
     }
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.MENU, { sent: menuSent ? 1 : 0, now });
     return;
   }
 
@@ -2034,6 +2191,11 @@ export async function handleAutoReplyUpdate(update, account) {
       { accountId: account.id, chatId: chat.id, sent: result.sent, lastRuleId: result.lastRule?.id },
       'telegram auto-reply (bot) rules handled',
     );
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.RULE, {
+      ruleId: result.lastRule?.id,
+      sent: result.sent,
+      now,
+    });
 
     if (result.sent > 0) {
       await state.update({
@@ -2046,6 +2208,7 @@ export async function handleAutoReplyUpdate(update, account) {
   }
 
   if (isNew) {
+    outcome = ANALYTICS_CATEGORIES.WELCOME;
     if (settings.welcomeMessage) {
       if (await sendText(token, chat.id, settings.welcomeMessage)) sent += 1;
     }
@@ -2067,6 +2230,7 @@ export async function handleAutoReplyUpdate(update, account) {
       }
     }
   } else if (settings.catalogEnabled && CATALOG_INTENT.test(text)) {
+    outcome = ANALYTICS_CATEGORIES.CATALOG;
     const items = await listCatalog({ activeOnly: true });
     if (items.length) {
       sent += await sendCatalog(token, chat.id, {
@@ -2078,6 +2242,7 @@ export async function handleAutoReplyUpdate(update, account) {
     const away = awayCooldownState(state, settings, now);
 
     if (!away.blocked) {
+      outcome = ANALYTICS_CATEGORIES.AWAY;
       if (await sendText(token, chat.id, settings.awayMessage)) {
         sent += 1;
         awaySent = true;
@@ -2100,6 +2265,7 @@ export async function handleAutoReplyUpdate(update, account) {
       ...(awaySent ? { lastAwayReplyAt: now } : {}),
     });
   }
+  await recordAnalytics(account.id, outcome, { sent, now });
 
   /*
    * Say why nothing was sent.
@@ -2468,9 +2634,12 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
 
   const settings = await ensureSettings(account.id);
   if (!settings.isEnabled) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.DISABLED, { now });
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (personal) skipped: auto-reply disabled');
     return;
   }
+
+  await recordAnalytics(account.id, ANALYTICS_CATEGORIES.INCOMING, { now });
 
   logger.info(
     {
@@ -2491,6 +2660,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
   const { state, isNew } = recorded;
 
   if (state.isBlocked || state.autoReplyEnabled === false) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.BLOCKED, { now });
     logger.info(
       { accountId: account.id, chatId: chat.id, isBlocked: state.isBlocked, autoReplyEnabled: state.autoReplyEnabled },
       'telegram auto-reply (personal) skipped: chat blocked or auto-reply off',
@@ -2498,10 +2668,12 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
     return;
   }
   if (isNew && !settings.replyToNewChats) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.NEW_CHATS_OFF, { now });
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (personal) skipped: new chats disabled');
     return;
   }
   if (!isNew && !settings.replyToReturningChats) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.RETURNING_CHATS_OFF, { now });
     logger.info({ accountId: account.id, chatId: chat.id }, 'telegram auto-reply (personal) skipped: returning chats disabled');
     return;
   }
@@ -2511,6 +2683,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
     state.lastReplyAt &&
     now.getTime() - new Date(state.lastReplyAt).getTime() < MIN_REPLY_INTERVAL_MS
   ) {
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.INTERVAL, { now });
     logger.info(
       { accountId: account.id, chatId: chat.id },
       'telegram auto-reply (personal) skipped: reply interval not elapsed',
@@ -2520,6 +2693,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
 
   if (isMenuCommand) {
     await sendAccountTextMenu(client, chat.id, account.id, settings, { path: [] });
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.MENU, { sent: 1, now });
     return;
   }
 
@@ -2541,6 +2715,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
       'telegram auto-reply (personal) menu choice received',
     );
     await runTextMenuSelection({ account, client, chat, settings, entry: pendingMenu, selection });
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.MENU, { sent: 1, now });
     return;
   }
 
@@ -2563,6 +2738,11 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
       { accountId: account.id, chatId: chat.id, sent: result.sent, lastRuleId: result.lastRule?.id },
       'telegram auto-reply (personal) rules handled',
     );
+    await recordAnalytics(account.id, ANALYTICS_CATEGORIES.RULE, {
+      ruleId: result.lastRule?.id,
+      sent: result.sent,
+      now,
+    });
 
     if (result.sent > 0) {
       await state.update({
@@ -2577,8 +2757,10 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
   let sent = 0;
   let awaySent = false;
   let silenceReason = null;
+  let outcome = ANALYTICS_CATEGORIES.SILENCE;
 
   if (isNew) {
+    outcome = ANALYTICS_CATEGORIES.WELCOME;
     if (settings.welcomeMessage) {
       if (await sendAccountText(client, chat.id, settings.welcomeMessage)) sent += 1;
     }
@@ -2600,6 +2782,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
       }
     }
   } else if (settings.catalogEnabled && CATALOG_INTENT.test(text)) {
+    outcome = ANALYTICS_CATEGORIES.CATALOG;
     const items = await listCatalog({ activeOnly: true });
     if (items.length) {
       sent += await sendAccountCatalog(client, chat.id, {
@@ -2611,6 +2794,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
     const away = awayCooldownState(state, settings, now);
 
     if (!away.blocked) {
+      outcome = ANALYTICS_CATEGORIES.AWAY;
       if (await sendAccountText(client, chat.id, settings.awayMessage)) {
         sent += 1;
         awaySent = true;
@@ -2635,6 +2819,7 @@ export async function handleIncomingAccountMessage({ account, client, chat, send
       ...(awaySent ? { lastAwayReplyAt: now } : {}),
     });
   }
+  await recordAnalytics(account.id, outcome, { sent, now });
 
   /*
    * Say why nothing was sent.

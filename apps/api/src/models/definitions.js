@@ -1481,6 +1481,38 @@ export const definitions = {
     },
   },
 
+  /**
+   * Aggregate auto-reply metrics. Counts only — never a transcript.
+   *
+   * One row per account, day, outcome category and rule. There is no chat id,
+   * no sender id, no username and no message text: the purpose is to answer
+   * "which rules are used and how often did the bot stay quiet", not to
+   * reconstruct a conversation. `ruleId = 0` denotes no rule, which keeps the
+   * unique index usable on MySQL (nullable columns allow duplicate rows).
+   */
+  TelegramAutoReplyMetric: {
+    tableName: 'telegram_auto_reply_metrics',
+    fields: {
+      id: pk(),
+      accountId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false },
+      bucketDate: { type: DataTypes.DATEONLY, allowNull: false },
+      category: { type: DataTypes.STRING(32), allowNull: false },
+      ruleId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: false, defaultValue: 0 },
+      eventCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      sentCount: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+    },
+    options: {
+      indexes: [
+        {
+          unique: true,
+          fields: ['accountId', 'bucketDate', 'category', 'ruleId'],
+          name: 'telegram_metrics_account_day_category_rule_unique',
+        },
+        { fields: ['accountId', 'bucketDate'], name: 'telegram_metrics_account_day_idx' },
+      ],
+    },
+  },
+
   TelegramMenuButton: {
     tableName: 'telegram_menu_buttons',
     fields: {

@@ -331,4 +331,3 @@ class _Banner extends StatelessWidget {
     );
   }
 }
-

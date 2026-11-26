@@ -52,14 +52,15 @@ Upload the repository **excluding** these:
 node_modules
 .git
 .env
-storage/media/*
+apps/api/uploads/*
 ```
 
 Use cPanel File Manager, or from a local terminal:
 
 ```bash
-# Build locally first, so the server never compiles. Use production public
-# values here: NEXT_PUBLIC_* are inlined at build time.
+# Build locally first, so the server never compiles. apps/web/.env.production
+# already supplies the production NEXT_PUBLIC_* values; the shell assignments
+# below are a belt-and-braces override (they win over every env file).
 # Bash / Git Bash:
 cd apps/web && NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com npm run build && cd ../api && npm run build && cd ..
 
@@ -204,15 +205,18 @@ COOKIE_DOMAIN=virallinkdigital.com
 BCRYPT_ROUNDS=12
 
 STORAGE_DRIVER=local
-MEDIA_ROOT=/home/cpaneluser/virallink/storage/media
+# Optional: with this unset, uploads go to <API app root>/uploads (inside the
+# backend code base, outside public_html). Set an absolute path to use elsewhere.
+MEDIA_ROOT=/home/cpaneluser/api.virallinkdigital.com/uploads
 MEDIA_PUBLIC_URL=/media
 MEDIA_MAX_BYTES=10485760
 
 LOG_LEVEL=info
 
-# First-run bootstrap. Both default to true, so you do not need to set them.
-# See step 6.
-AUTO_MIGRATE=true
+# Production applies schema changes deliberately (Run NPM Script -> npm run
+# migrate), so AUTO_MIGRATE must be false here. The API refuses to boot in
+# production if it is true. AUTO_SEED stays true: the seeder is pure upsert.
+AUTO_MIGRATE=false
 AUTO_SEED=true
 
 # Password recovery. All optional — the defaults are sensible.
@@ -244,51 +248,39 @@ the split two-app setup is what is documented here.
 
 ---
 
-## 6. Schema and reference data: automatic
+## 6. Schema and reference data
 
-**There is nothing to run here.** The API applies pending migrations and seeds the
-RBAC baseline every time it starts, before it opens its listening port.
-
-This is deliberate and is a consequence of the hosting target, not a shortcut. On
-cPanel the only thing that can be started is the Node.js application itself, so
-there may be no shell, no cron and no "Run NPM Script" button to apply a schema
-change from. Making a deploy depend on a manual step means the next one silently
-serves requests against a schema that is one migration behind.
-
-Both operations are idempotent, which is what makes running them on every boot
-safe:
+In development the API applies pending migrations and seeds the RBAC baseline on
+every start, before it opens its listening port (`AUTO_MIGRATE=true`,
+`AUTO_SEED=true`). Both operations are idempotent:
 
 - a migration runs **once**, then its filename is recorded in the `SequelizeMeta`
   table, so it never runs twice;
 - the seeder **upserts**, so re-running updates rows rather than duplicating them.
   It contains no business data — no clients, employees, testimonials or statistics.
 
-On the first boot against an empty database this creates all 41 tables, runs the
-14 migrations and seeds 45 permissions, 15 roles, 12 financial categories and the
-company profile. Every later boot finds nothing pending and takes a few
-milliseconds.
+**In production, apply migrations deliberately.** Set `AUTO_MIGRATE=false` (the API
+refuses to boot in production if it is true), then in cPanel open the API app and
+use **Run NPM Script → `npm run migrate`** before restarting. One process applies
+the changes; Passenger is not allowed to race several of them against a live
+schema. `AUTO_SEED=true` stays on: the seeder is pure upsert, and it runs inside a
+MySQL advisory lock so concurrent Passenger processes cannot duplicate the company
+profile or financial categories.
 
-**On concurrent processes:** Passenger starts several processes for one
-application and they all execute this at once on a deploy. Two of them running the
-same migration simultaneously is how a schema gets corrupted, so the schema
-bootstrap is serialised with a MySQL advisory lock. The second process waits for
-the lock, then finds nothing pending. Seeding is inside the same lock, because
-the company profile and financial categories are read-then-inserted and can
-otherwise be duplicated by a concurrent first boot.
-
-Set `AUTO_MIGRATE=false` or `AUTO_SEED=false` only on a host where you *can* run
-`npm run migrate` deliberately. On this host, off means the schema is never
-updated.
+On the first boot against an empty database, after the migrations have run, the
+seeder creates the RBAC baseline — 49 permissions, 15 roles, 12 financial
+categories and the company profile. Every later boot finds nothing pending and
+takes a few milliseconds.
 
 **If a migration fails**, the API logs the error and does not start. That is
 intended: an app that refuses to boot is a visible failure, whereas one that starts
 against a half-built schema 500s on every page with nothing in the log to explain
 it. The migration helpers tolerate an already-present column, so a migration that
-failed partway is recoverable simply by fixing it and restarting.
+failed partway is recoverable by fixing it and running the migration again.
 
-You can still run these by hand on a machine that has a shell — `npm run migrate`
-and `npm run seed` reach exactly the same end state. They are a developer
-convenience, not a deployment step.
+`npm run migrate` and `npm run seed` reach the same end state on a machine with a
+shell. They are a developer convenience, and in production `npm run migrate` is the
+deliberate schema step described above.
 
 ---
 
@@ -324,16 +316,22 @@ or `npm run create:admin` from a shell if you have one.
 
 ## 8. Media directory permissions
 
+Uploads go to `<API app root>/uploads` by default, inside the backend code base.
+On this host that is `/home/cpaneluser/api.virallinkdigital.com/uploads`, well
+outside the website's `public_html`. Create it and make it writable:
+
 ```bash
-mkdir -p ~/virallink/storage/media
-chmod 755 ~/virallink/storage/media
+mkdir -p /home/cpaneluser/api.virallinkdigital.com/uploads
+chmod 755 /home/cpaneluser/api.virallinkdigital.com/uploads
 ```
 
-If the API cannot write, the uploads fail silently in the UI while logging a
-permission error. Verify with **Terminal**:
+If `MEDIA_ROOT` is set to an absolute path in the cPanel environment variables,
+that path wins instead — create and chmod that directory. If the API cannot
+write, uploads fail silently in the UI while logging a permission error. Verify
+with **Terminal**:
 
 ```bash
-cd ~/virallink/apps/api
+cd /home/cpaneluser/api.virallinkdigital.com
 node -e "import('./src/config/env.js').then(async m=>{const d=(await import('./src/config/storage.js')).default;await d.put('test/perm.txt',Buffer.from('ok'),'text/plain');await d.delete('test/perm.txt');console.log('storage OK')})"
 ```
 
@@ -544,6 +542,20 @@ by the drain rather than lost. It is also why the code's lifetime
 generous — a code that arrives after it has expired is a code the person cannot
 use.
 
+### Check the backup is actually producing files
+
+Do not assume it is working. After the first cron cycle:
+
+```bash
+ls -lt ~/virallink/storage/backups/
+tail -20 ~/virallink/storage/cron.log
+```
+
+An empty `backups/` directory after a cycle means the job is failing, and the
+usual cause is that the host has no `mysqldump` binary on the PATH for the cron
+environment. In that case use **phpMyAdmin → Export → Save as file** on a daily
+schedule instead, and confirm you can restore a copy before relying on it.
+
 ---
 
 ## Telegram bot (optional)
@@ -663,7 +675,8 @@ any `NEXT_PUBLIC_*` change, because those values are inlined at build time.
 - [ ] `NODE_ENV=production`
 - [ ] `DB_SYNC_ALLOWED=false` — **critical**. True in production can drop columns and destroy financial data. The API refuses to boot if it is true, but verify it is not set.
 - [ ] `COOKIE_SECURE=true`
-- [ ] `AUTO_MIGRATE=true` and `AUTO_SEED=true` — or simply unset, since both default to true. Do **not** set `AUTO_MIGRATE=false` on this host: there is no shell to run `npm run migrate` from, so the schema would never be updated.
+- [ ] `AUTO_MIGRATE=false` — **critical**. The API refuses to boot in production if it is true. Apply schema changes deliberately with **Run NPM Script → `npm run migrate`** before restarting.
+- [ ] `AUTO_SEED=true` — the RBAC baseline seeder is idempotent and safe on every boot.
 - [ ] `JWT_SECRET` and `JWT_REFRESH_SECRET` are different 48-byte random values
 - [ ] `CORS_ORIGINS` lists only your real origin, no `*`
 - [ ] `SITE_URL` and `NEXT_PUBLIC_SITE_URL` both use `https://`

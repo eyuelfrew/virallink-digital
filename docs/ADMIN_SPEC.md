@@ -811,10 +811,3 @@ The codebase has been burned by drift between the two apps (the `deliverables`
 
 *Verified against the working tree at commit `f674746` (branch `second`), including
 the uncommitted Telegram, My Tasks, and granular-role changes.*
-
-
-
-
-
-
-

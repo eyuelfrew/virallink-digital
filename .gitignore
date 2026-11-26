@@ -18,6 +18,9 @@ next-env.d.ts
 storage/media/
 storage/backups/
 storage/*.log
+# Uploaded files inside the API app (keep the folder, ignore its contents)
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
 
 # Logs
 *.log

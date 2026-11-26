@@ -89,6 +89,8 @@ const schema = z.object({
   DB_POOL_IDLE_MS: numericString(10000),
   DB_SYNC_ALLOWED: booleanish.default('false'),
   DB_LOG_QUERIES: booleanish.default('false'),
+  AUTO_MIGRATE: booleanish.default('true'),
+  AUTO_SEED: booleanish.default('true'),
 
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters. Generate one with: openssl rand -base64 48'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
@@ -140,7 +142,7 @@ const schema = z.object({
   RATE_LIMIT_PASSWORD_RESET_MAX: numericString(20),
 
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
-  MEDIA_ROOT: z.string().default('./storage/media'),
+  MEDIA_ROOT: z.string().default('./uploads'),
   MEDIA_PUBLIC_URL: z.string().default('/media'),
   MEDIA_MAX_BYTES: numericString(10485760),
   MEDIA_ALLOWED_TYPES: csv([
@@ -206,6 +208,11 @@ const schema = z.object({
    * deployment keeps working without a new variable.
    */
   TELEGRAM_AUTO_REPLY_KEY: z.string().optional(),
+  /**
+   * How long aggregate auto-reply metrics are kept. Counts only — no message
+   * text is stored — but old daily rows are still pruned to keep the table small.
+   */
+  TELEGRAM_ANALYTICS_RETENTION_DAYS: numericString(180),
 
   /*
    * Password recovery.
@@ -251,9 +258,11 @@ export const env = Object.freeze({
 
   // Absolute path, resolved from the API app root so a relative MEDIA_ROOT in
   // .env cannot break depending on which directory the process was launched from.
+  // `here` is apps/api/src/config, so two levels up is the API app root:
+  // the default ./uploads lives inside the backend code-base directory.
   mediaRoot: path.isAbsolute(raw.MEDIA_ROOT)
     ? raw.MEDIA_ROOT
-    : path.resolve(here, '../../../..', raw.MEDIA_ROOT),
+    : path.resolve(here, '../..', raw.MEDIA_ROOT),
   backupDir: path.isAbsolute(raw.BACKUP_DIR)
     ? raw.BACKUP_DIR
     : path.resolve(here, '../../../..', raw.BACKUP_DIR),
@@ -270,6 +279,13 @@ if (env.isProduction) {
   }
   if (env.DB_SYNC_ALLOWED) {
     problems.push('DB_SYNC_ALLOWED must be false in production');
+  }
+  if (env.AUTO_MIGRATE) {
+    problems.push(
+      'AUTO_MIGRATE must be false in production. Passenger can start several ' +
+        'processes at once and concurrent migrations on a live database are not ' +
+        "safe. Apply schema changes from cPanel with 'Run NPM script' -> npm run migrate.",
+    );
   }
   if (env.BCRYPT_ROUNDS < 12) {
     problems.push('BCRYPT_ROUNDS must be at least 12 in production');
