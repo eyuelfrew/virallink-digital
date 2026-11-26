@@ -624,6 +624,7 @@ webhookStatus, connectionStatus, lastError, lastSyncedAt, lastLoginAt, nested
 | POST | `/:id/reset-away` | owner or manage | Clears the away-message cooldown — `{ chatId }` for one chat, or every chat of the connection when omitted |
 | POST | `/:id/test-message` | owner or manage | `telegramTestMessageSchema`: `chatId`, `text`; sends through the account's own transport (Bot API or MTProto) and returns `{ sent, via, chatId }` |
 | GET | `/blocked-chats?accountId=` | owner or `telegram.read` | The chats that are blocked or whose auto-reply is off. A chat id and two switches — there is no conversation to list |
+| GET | `/:id/analytics?days=` | `telegram.read` (owner), manage for any account | Aggregate counts only, `days` 1–365 (default 30): `{ window, totals: { messages, replies, silent, ruleReplies }, daily: [{ date, messages, replies, silent }], topRules: [{ ruleId, name, events, replies }] }`. No chat id, sender, username or message text is stored or returned |
 | GET | `/:id/rules` | owner or manage | Ordered `priority DESC, id ASC`; images and audio attached |
 | POST | `/:id/rules` | owner or manage | `telegramRuleSchema`; 201 |
 | PUT | `/:id/rules/:ruleId` | owner or manage | `updateTelegramRuleSchema` |
@@ -745,6 +746,23 @@ hundred thousand of these and nothing readable about any of them. The
 transcript columns (`lastMessageText`, `title`, `username`, `firstName`,
 `lastName`, `chatType`, `messageCount`, `replyCount`, `firstMessageAt`,
 `lastMessageAt`) were dropped when the table was replaced.
+
+### `telegram_auto_reply_metrics` (counts only)
+
+Business analytics without a transcript. One row per account, day, outcome
+category and rule: `id`, `accountId`, `bucketDate` (DATEONLY), `category`,
+`ruleId` (`0` means no rule), `eventCount`, `sentCount`, timestamps. Unique
+index `(accountId, bucketDate, category, ruleId)` plus `(accountId, bucketDate)`
+for the daily report.
+
+Categories are `incoming`, `rule`, `menu`, `welcome`, `catalog`, `away`,
+`silence`, `blocked`, `disabled`, `interval`, `new_chats_off` and
+`returning_chats_off`. Every message that reaches the engine adds one `incoming`
+event and one outcome event. There is **no** chat id, sender id, username,
+message text or free-text field in this table — the only rule identifier is a
+numeric foreign-style id, and rule names are joined from `telegram_auto_reply_rules`.
+`TELEGRAM_ANALYTICS_RETENTION_DAYS` (default 180) governs the nightly prune in
+`pruneActivity.js`.
 
 ### `telegram_catalog_items` (global)
 

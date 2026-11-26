@@ -16,6 +16,8 @@ import logger from '../config/logger.js';
  * Prunes:
  *  - refresh_tokens whose expiry has passed
  *  - activity_logs older than ACTIVITY_RETENTION_DAYS
+ *  - aggregate Telegram metrics older than TELEGRAM_ANALYTICS_RETENTION_DAYS
+ *    (counts only — there is no transcript to expire)
  *  - password_reset_tokens older than a week, spent or not
  *  - the in-memory token blocklist (only meaningful within one process, so it is
  *    cleared defensively)
@@ -28,6 +30,15 @@ async function pruneActivityLogs() {
   // The audit trail is not soft-deleted, so pruning is a hard delete of rows that
   // are outside the retention window.
   return ActivityLog.destroy({ where: { createdAt: { [Op.lt]: cutoff } } });
+}
+
+/**
+ * Aggregate Telegram metrics are counts, not conversations, but old daily rows
+ * still have no business value and would grow the table forever.
+ */
+async function pruneTelegramMetrics() {
+  const cutoff = new Date(Date.now() - env.TELEGRAM_ANALYTICS_RETENTION_DAYS * 86400000);
+  return models.TelegramAutoReplyMetric.destroy({ where: { createdAt: { [Op.lt]: cutoff } } });
 }
 
 async function pruneSoftDeleted() {
@@ -79,14 +90,19 @@ async function main() {
     return 0;
   });
 
+  const metrics = await pruneTelegramMetrics().catch((error) => {
+    logger.error({ err: error.message }, 'failed to prune Telegram metrics');
+    return 0;
+  });
+
   const archived = await pruneSoftDeleted().catch((error) => {
     logger.error({ err: error.message }, 'failed to prune archived records');
     return 0;
   });
 
-  logger.info({ tokens, resets, activity, archived }, 'maintenance complete');
+  logger.info({ tokens, resets, activity, metrics, archived }, 'maintenance complete');
   console.log(
-    `Pruned ${tokens} expired session(s), ${resets} reset token(s), ${activity} activity log row(s), ${archived} archived record(s).`,
+    `Pruned ${tokens} expired session(s), ${resets} reset token(s), ${activity} activity log row(s), ${metrics} Telegram metric row(s), ${archived} archived record(s).`,
   );
 
   await sequelize.close();

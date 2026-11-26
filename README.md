@@ -121,18 +121,19 @@ Listens on `http://localhost:3000`. Sign in at
 Both processes run independently and take their config from `apps/api/.env` and
 `apps/web/.env`. There is no single command that starts both; use two terminals.
 
-Local development overrides the web app's public API origin in
-`apps/web/.env.local` (gitignored), which points the browser at
-`http://localhost:4000`. Never upload that file — production uses `apps/web/.env`
-plus the cPanel environment variables and calls `https://api.virallinkdigital.com`
-directly. The API omits the `Domain` attribute on cookies when `SITE_URL` is a
-localhost URL, so the browser will actually store them here.
+The web app keeps dev and production config in separate files:
 
-When building for **production**, set `NEXT_PUBLIC_SITE_URL`,
-`NEXT_PUBLIC_API_PUBLIC_URL` and `API_INTERNAL_URL` explicitly in the shell
-before `npm run build:web` (as `docs/DEPLOYMENT.md` shows). Shell environment
-variables win over `.env.local`, so a local override cannot leak into the
-production bundle. See the build command in `docs/DEPLOYMENT.md`.
+| File | Used by | API origin |
+| --- | --- | --- |
+| `apps/web/.env.development.local` (gitignored) | `npm run dev:web` | `http://localhost:4000` |
+| `apps/web/.env.production` (committed) | `npm run build` and `next start` | `https://api.virallinkdigital.com` |
+
+This split matters: Next.js loads `.env.local` **in both modes**, and it outranks
+`.env.production` during a build. Keeping the localhost values in
+`.env.development.local` instead means a plain `npm run build:web` always bakes in
+the production origin. Setting the three variables in the shell still works as an
+extra override; see `docs/DEPLOYMENT.md`. The API omits the `Domain` attribute on
+cookies when `SITE_URL` is a localhost URL, so the browser will store them here.
 
 ### Both at once
 
@@ -330,14 +331,14 @@ virallink/
 │  │  ├─ services/          business logic
 │  │  ├─ serializers/       public.js — the privacy boundary
 │  │  ├─ middleware/        auth, rbac, validate, audit, error
-│  │  └─ test/
+│  │  ├─ test/
+│  │  └─ uploads/            uploaded images (gitignored; created on first upload)
 │  └─ web/                  Next.js 16 App Router, JavaScript
 │     ├─ app/(public)/      public pages
 │     ├─ app/vira-admin/  management console
 │     ├─ components/
 │     └─ lib/               config (browserApiUrl), api, seo, auth, sanitize, utils
-├─ packages/shared/         enums, permissions, zod schemas, seo + money helpers
-└─ storage/media/           uploaded images (gitignored)
+└─ packages/shared/         enums, permissions, zod schemas, seo + money helpers
 ```
 
 Browser code calls the API directly at

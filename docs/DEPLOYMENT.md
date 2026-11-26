@@ -52,14 +52,15 @@ Upload the repository **excluding** these:
 node_modules
 .git
 .env
-storage/media/*
+apps/api/uploads/*
 ```
 
 Use cPanel File Manager, or from a local terminal:
 
 ```bash
-# Build locally first, so the server never compiles. Use production public
-# values here: NEXT_PUBLIC_* are inlined at build time.
+# Build locally first, so the server never compiles. apps/web/.env.production
+# already supplies the production NEXT_PUBLIC_* values; the shell assignments
+# below are a belt-and-braces override (they win over every env file).
 # Bash / Git Bash:
 cd apps/web && NEXT_PUBLIC_SITE_URL=https://virallinkdigital.com NEXT_PUBLIC_API_PUBLIC_URL=https://api.virallinkdigital.com npm run build && cd ../api && npm run build && cd ..
 
@@ -204,7 +205,9 @@ COOKIE_DOMAIN=virallinkdigital.com
 BCRYPT_ROUNDS=12
 
 STORAGE_DRIVER=local
-MEDIA_ROOT=/home/cpaneluser/virallink/storage/media
+# Optional: with this unset, uploads go to <API app root>/uploads (inside the
+# backend code base, outside public_html). Set an absolute path to use elsewhere.
+MEDIA_ROOT=/home/cpaneluser/api.virallinkdigital.com/uploads
 MEDIA_PUBLIC_URL=/media
 MEDIA_MAX_BYTES=10485760
 
@@ -313,16 +316,22 @@ or `npm run create:admin` from a shell if you have one.
 
 ## 8. Media directory permissions
 
+Uploads go to `<API app root>/uploads` by default, inside the backend code base.
+On this host that is `/home/cpaneluser/api.virallinkdigital.com/uploads`, well
+outside the website's `public_html`. Create it and make it writable:
+
 ```bash
-mkdir -p ~/virallink/storage/media
-chmod 755 ~/virallink/storage/media
+mkdir -p /home/cpaneluser/api.virallinkdigital.com/uploads
+chmod 755 /home/cpaneluser/api.virallinkdigital.com/uploads
 ```
 
-If the API cannot write, the uploads fail silently in the UI while logging a
-permission error. Verify with **Terminal**:
+If `MEDIA_ROOT` is set to an absolute path in the cPanel environment variables,
+that path wins instead — create and chmod that directory. If the API cannot
+write, uploads fail silently in the UI while logging a permission error. Verify
+with **Terminal**:
 
 ```bash
-cd ~/virallink/apps/api
+cd /home/cpaneluser/api.virallinkdigital.com
 node -e "import('./src/config/env.js').then(async m=>{const d=(await import('./src/config/storage.js')).default;await d.put('test/perm.txt',Buffer.from('ok'),'text/plain');await d.delete('test/perm.txt');console.log('storage OK')})"
 ```
 

@@ -174,7 +174,7 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
     }
   }
 
-  async function handleSendCode(forceSms = false) {
+  async function handleSendCode() {
     try {
       /*
        * The phone number in the form is not used until it is saved. Save it
@@ -205,32 +205,15 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
         setApiHash('');
       }
 
-      const next = await call('/send-code', { body: { forceSms } });
+      const next = await call('/send-code');
       setCode('');
       const phone = next?.phone_number || nextPhone || 'your phone';
-      const smsAvailable = next?.sms_available !== false;
 
-      if (next?.delivery === 'sms') {
-        setNotice(`Telegram sent the login code by SMS to ${phone}.`);
-      } else if (next?.delivery === 'call') {
-        setNotice(`Telegram will call ${phone} with the login code.`);
-      } else if (next?.is_code_via_app) {
-        if (!smsAvailable) {
-          setNotice(
-            `Telegram will only deliver this code inside the Telegram app on ${phone}; it refused SMS for this number. Open Telegram, search for "Telegram" (the chat with the blue checkmark) and read the code. If it is not there, you are not signed in on that number in the app — use "Connect with QR code" below.`,
-          );
-        } else if (next?.sms_requested) {
-          setNotice(
-            `Telegram did not offer SMS for this code, so it went to your Telegram app on ${phone}. Open Telegram and look for a message from "Telegram".`,
-          );
-        } else {
-          setNotice(
-            `Telegram sent the code inside your Telegram app on ${phone}, not by SMS. Open Telegram, search for "Telegram" and read the code. If it is not there, press "Send code by SMS" below.`,
-          );
-        }
-      } else {
-        setNotice(`Telegram sent the login code to ${phone}.`);
-      }
+      // This account only uses the OTP path: Telegram delivers the code inside
+      // the app. There is no SMS/call branch.
+      setNotice(
+        `Telegram sent the login code to ${phone}. Look for a message from "Telegram" inside your Telegram app. If you are signed in to this account on more than one phone, it may land on another session — use "Connect with QR code" below.`,
+      );
     } catch {
       // Error already surfaced.
     }
@@ -352,8 +335,6 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
   const pendingLogin = status?.pending_login || null;
   const needsPassword = pendingLogin?.status === 'password_required';
   const qrLogin = pendingLogin?.mode === 'qr' ? pendingLogin : null;
-  const smsAvailable =
-    pendingLogin?.mode === 'code' ? pendingLogin.sms_available ?? null : null;
 
   return (
     <AdminPanel
@@ -497,8 +478,9 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
                 <div>
                   <p className="text-sm font-semibold text-ink">Trouble receiving the login code?</p>
                   <p className="text-xs text-ink-muted">
-                    Telegram sometimes refuses SMS and sends the code only to your other Telegram
-                    sessions. Scan a QR code from your phone instead — no code is needed.
+                    Codes can arrive in an odd place when your Telegram is connected elsewhere.
+                    You can sign in with a QR code from your phone instead — no login code is
+                    needed.
                   </p>
                 </div>
                 <div>
@@ -578,24 +560,11 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => handleSendCode(false)}
+                  onClick={handleSendCode}
                   className="inline-flex h-10 items-center gap-2 rounded-md border border-line px-4 text-sm font-semibold text-ink-soft disabled:opacity-60"
                 >
                   <RefreshCw className="size-4" aria-hidden="true" />
                   Send login code
-                </button>
-              ) : null}
-
-              {configured && smsAvailable !== false ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => handleSendCode(true)}
-                  title="Ask Telegram to deliver the code by text message instead of through another Telegram session."
-                  className="inline-flex h-10 items-center gap-2 rounded-md border border-line px-4 text-sm font-semibold text-ink-soft disabled:opacity-60"
-                >
-                  <RefreshCw className="size-4" aria-hidden="true" />
-                  Send code by SMS
                 </button>
               ) : null}
 
@@ -618,16 +587,10 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
           <form onSubmit={handleVerifyCode} className="flex flex-col gap-2 rounded-md border border-line p-4">
             <p className="text-sm font-semibold text-ink">Enter the login code</p>
             <p className="text-xs text-ink-muted">
-              Telegram sent a code to your Telegram app or by SMS. It expires in a few
-              minutes. If nothing arrived, open Telegram → Settings → Devices and end
-              any old sessions, then resend.
+              Telegram sent the login code inside your Telegram app — search for "Telegram"
+              and read the code. If it expired or is not there, cancel and use
+              “Connect with QR code” above.
             </p>
-            {smsAvailable === false ? (
-              <p className="rounded-md bg-warning-bg p-2 text-xs text-warning">
-                Telegram refused SMS for this number. The code is only inside your Telegram
-                app. If you cannot find it there, cancel and use “Connect with QR code” above.
-              </p>
-            ) : null}
             <div className="flex flex-col gap-3 sm:flex-row">
               <input
                 value={code}
@@ -647,21 +610,11 @@ export function TelegramAccountPanel({ onChanged, className = '' }) {
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => handleSendCode(false)}
+                onClick={handleSendCode}
                 className="inline-flex h-10 items-center justify-center rounded-md border border-line px-4 text-sm font-semibold text-ink-soft disabled:opacity-60"
               >
                 Resend
               </button>
-              {smsAvailable !== false ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => handleSendCode(true)}
-                  className="inline-flex h-10 items-center justify-center rounded-md border border-line px-4 text-sm font-semibold text-ink-soft disabled:opacity-60"
-                >
-                  Resend by SMS
-                </button>
-              ) : null}
             </div>
           </form>
         ) : null}

@@ -1115,6 +1115,11 @@ export const telegramCatalogQuerySchema = z.object({
     .optional(),
 });
 
+/** Aggregate auto-reply analytics: a bounded window, no free-text filters. */
+export const telegramAnalyticsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+});
+
 export const telegramActiveSchema = z.object({
   isActive: z.boolean(),
 });

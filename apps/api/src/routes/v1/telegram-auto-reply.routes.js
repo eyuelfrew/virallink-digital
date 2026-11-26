@@ -191,6 +191,25 @@ router.get('/blocked-chats', async (request, response) => {
   response.json({ data: chats });
 });
 
+/**
+ * GET /:id/analytics — aggregate auto-reply metrics.
+ *
+ * Counts only: no chat id, sender, username or message text is exposed. The
+ * response is totals, a daily series and the most-used rules, scoped to this
+ * account. Owners need telegram.read; managers can read any account.
+ */
+router.get(
+  '/:id/analytics',
+  requirePermission(PERMISSIONS.TELEGRAM_READ),
+  v('idParam'),
+  v('telegramAnalytics'),
+  async (request, response) => {
+    const account = await accountFor(request, idFrom(request));
+    const { days } = query(request);
+    response.json({ data: await telegram.getAnalytics(account.id, { days }) });
+  },
+);
+
 /** Block a chat, or switch its auto-reply off. */
 router.post('/:id/chat-switch', v('idParam'), v('telegramChatSwitch'), async (request, response) => {
   const account = await accountFor(request, idFrom(request));
